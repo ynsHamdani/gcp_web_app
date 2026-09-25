@@ -1,0 +1,27 @@
+name: gcp-web
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+
+  # Geospatial core
+  - geopandas
+  - rasterio
+  - shapely
+  - pyproj
+  - pyogrio
+
+  # Database
+  - sqlalchemy
+  - psycopg
+
+  # Install remaining Python packages with pip
+  - pip
+  - pip:
+      - dash
+      - dash-leaflet
+      - gunicorn
+      - rio-cogeo
+      - python-dotenv
+      - requests
