@@ -3,6 +3,8 @@ from dash import Dash, Input, Output, State, ctx, no_update
 from flask import send_from_directory
 import dash_leaflet as dl
 from dash_extensions.javascript import Namespace
+from dash import Dash, Input, Output, State, ctx, no_update, Patch
+
 
 from config import (
     APP_BASE_URL,
@@ -145,8 +147,7 @@ def serve_historical_raster(filename):
     Output("reference-raster-layer", "url"),
     Output("reference-raster-layer", "maxNativeZoom"),
 
-    Output("historical-raster-layer", "url"),
-    Output("historical-raster-layer", "maxNativeZoom"),
+    Output("historical-layer-control", "children"),
 
     Output("reference-map", "center"),
     Output("reference-map", "zoom"),
@@ -336,23 +337,37 @@ def handle_raster_upload(
 
             zoom = asset.initial_zoom
 
-                       
+            new_layer = dl.Overlay(
+                dl.TileLayer(
+                    url=asset.tile_url,
+                    tileSize=256,
+                    maxZoom=24,
+                    opacity=1.0,
+                ),
+                name=historical_filename,
+                checked=True,
+            )
+
+            patched_layers = Patch()
+            patched_layers.append(new_layer)
+
+
             return (
-                no_update,
-                no_update,
+                no_update,          # reference raster URL
+                no_update,          # reference max zoom
 
-                asset.tile_url,
-                asset.maxzoom,
+                patched_layers,     # historical-layer-control.children
 
-                asset.center,
-                zoom,
+                asset.center,       # reference map center
+                zoom,               # reference map zoom
 
-                asset.center,
-                zoom,
+                asset.center,       # historical map center
+                zoom,               # historical map zoom
 
-                no_update,
+                no_update,          # reference status
                 f"Loaded: {historical_filename}",
             )
+
 
         except Exception as exc:
 

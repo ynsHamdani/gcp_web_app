@@ -9,37 +9,21 @@ HISTORICAL_BASE_URL = (
 
 def create_historical_layers():
 
-    # -----------------------------------------------------
-    # OpenStreetMap base layer
-    # -----------------------------------------------------
-
-    osm = dl.TileLayer(
-        id="historical-osm-layer",
-        url=HISTORICAL_BASE_URL,
-        attribution="© OpenStreetMap contributors",
-        opacity=1.0,
-    )
-
-    # -----------------------------------------------------
-    # Historical raster
-    # -----------------------------------------------------
-    #
-    # Keep this TileLayer directly on the map.
-    # Do NOT wrap it inside LayersControl.
-    #
-
-    historical = dl.TileLayer(
-        id="historical-raster-layer",
-        url="",
-        opacity=1.0,
-        tileSize=256,
-        maxZoom=24,
-        zIndex=10,
+    osm = dl.BaseLayer(
+        dl.TileLayer(
+            url=HISTORICAL_BASE_URL,
+            attribution="© OpenStreetMap contributors",
+        ),
+        name="OpenStreetMap",
+        checked=True,
     )
 
     return [
-        osm,
-        historical,
+        dl.LayersControl(
+            id="historical-layer-control",
+            children=[osm],
+            position="topright",
+        ),
 
         dl.FullScreenControl(
             position="bottomright",
