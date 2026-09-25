@@ -3,8 +3,16 @@ from dash import Dash, Input, Output, State, ctx, no_update
 from flask import send_from_directory
 import dash_leaflet as dl
 from dash_extensions.javascript import Namespace
-from dash import Dash, Input, Output, State, ctx, no_update, Patch
-
+from dash import (
+    Dash,
+    Input,
+    Output,
+    State,
+    Patch,
+    ctx,
+    no_update,
+    ALL
+)
 
 from config import (
     APP_BASE_URL,
@@ -21,6 +29,7 @@ from maps.raster import (
     validate_geotiff,
     convert_to_cog,
     get_titiler_asset,
+    calculate_fit_zoom,
 )
 
 from maps.reference import create_reference_layers
@@ -144,25 +153,34 @@ def serve_historical_raster(filename):
 # =========================================================
 
 @app.callback(
+
+    # Reference raster
     Output("reference-raster-layer", "url"),
     Output("reference-raster-layer", "maxNativeZoom"),
 
+    # Historical layers
     Output("historical-layer-control", "children"),
 
+    # Reference map viewport
     Output("reference-map", "center"),
     Output("reference-map", "zoom"),
 
+    # Historical map viewport
     Output("historical-map", "center"),
     Output("historical-map", "zoom"),
 
+    # Status
     Output("reference-upload-status", "children"),
     Output("historical-upload-status", "children"),
 
+    # Inputs
     Input("reference-upload", "contents"),
     Input("historical-upload", "contents"),
 
+    # State
     State("reference-upload", "filename"),
     State("historical-upload", "filename"),
+    State("historical-opacity", "value"),
 
     prevent_initial_call=True,
 )
@@ -171,7 +189,9 @@ def handle_raster_upload(
     historical_contents,
     reference_filename,
     historical_filename,
+    historical_opacity,
 ):
+
     triggered = ctx.triggered_id
 
     # =====================================================
@@ -184,13 +204,16 @@ def handle_raster_upload(
         cog_path = None
 
         try:
+
             original_path = save_uploaded_tiff(
                 reference_contents,
                 reference_filename,
                 REFERENCE_ORIGINAL_DIR,
             )
 
-            validate_geotiff(original_path)
+            validate_geotiff(
+                original_path
+            )
 
             cog_path = (
                 REFERENCE_COG_DIR
@@ -214,10 +237,10 @@ def handle_raster_upload(
                 minzoom,
                 maxzoom,
             ) = get_titiler_asset(
-                    raster_url,
-                    TITILER_URL,
-                    cog_path,
-                )
+                raster_url,
+                TITILER_URL,
+                cog_path,
+            )
 
             asset = RasterAsset(
                 name=reference_filename,
@@ -229,16 +252,15 @@ def handle_raster_upload(
                 maxzoom=maxzoom,
             )
 
-            zoom = min(
-                asset.minzoom + 1,
-                asset.maxzoom,
+            zoom = calculate_fit_zoom(
+                asset.bounds
             )
 
             return (
+
                 asset.tile_url,
                 asset.maxzoom,
 
-                no_update,
                 no_update,
 
                 asset.center,
@@ -251,29 +273,27 @@ def handle_raster_upload(
                 no_update,
             )
 
-              
-
         except Exception as exc:
 
             if original_path:
-                original_path.unlink(missing_ok=True)
+                original_path.unlink(
+                    missing_ok=True
+                )
 
             if cog_path:
-                cog_path.unlink(missing_ok=True)
+                cog_path.unlink(
+                    missing_ok=True
+                )
 
             return (
                 no_update,
                 no_update,
-
                 no_update,
                 no_update,
-
                 no_update,
                 no_update,
-
                 no_update,
                 no_update,
-
                 f"Upload failed: {exc}",
                 no_update,
             )
@@ -289,13 +309,16 @@ def handle_raster_upload(
         cog_path = None
 
         try:
+
             original_path = save_uploaded_tiff(
                 historical_contents,
                 historical_filename,
                 HISTORICAL_ORIGINAL_DIR,
             )
 
-            validate_geotiff(original_path)
+            validate_geotiff(
+                original_path
+            )
 
             cog_path = (
                 HISTORICAL_COG_DIR
@@ -322,7 +345,6 @@ def handle_raster_upload(
                 raster_url,
                 TITILER_URL,
                 cog_path,
-                
             )
 
             asset = RasterAsset(
@@ -335,66 +357,93 @@ def handle_raster_upload(
                 maxzoom=maxzoom,
             )
 
-            zoom = asset.initial_zoom
+            # -------------------------------------------------
+            # Correct zoom for THIS new raster
+            # -------------------------------------------------
+
+            zoom = calculate_fit_zoom(
+                asset.bounds
+            )
+
+            # -------------------------------------------------
+            # Unique layer ID
+            # -------------------------------------------------
+
+            layer_id = {
+                "type": "historical-raster-layer",
+                "index": cog_path.stem,
+            }
+
+            # -------------------------------------------------
+            # New historical layer
+            # -------------------------------------------------
 
             new_layer = dl.Overlay(
+
                 dl.TileLayer(
+                    id=layer_id,
                     url=asset.tile_url,
+                    opacity=(
+                        historical_opacity / 100
+                        if historical_opacity is not None
+                        else 1.0
+                    ),
                     tileSize=256,
                     maxZoom=24,
-                    opacity=1.0,
+                    zIndex=10,
                 ),
+
                 name=historical_filename,
                 checked=True,
             )
 
+            # -------------------------------------------------
+            # Append without recreating the map
+            # -------------------------------------------------
+
             patched_layers = Patch()
-            patched_layers.append(new_layer)
-
-
-            return (
-                no_update,          # reference raster URL
-                no_update,          # reference max zoom
-
-                patched_layers,     # historical-layer-control.children
-
-                asset.center,       # reference map center
-                zoom,               # reference map zoom
-
-                asset.center,       # historical map center
-                zoom,               # historical map zoom
-
-                no_update,          # reference status
-                f"Loaded: {historical_filename}",
+            patched_layers.append(
+                new_layer
             )
 
+            return (
+                no_update,                         # 1
+                no_update,                         # 2
+                patched_layers,                    # 3
+
+                asset.center,                      # 4
+                zoom,                              # 5
+
+                asset.center,                      # 6
+                zoom,                              # 7
+
+                no_update,                         # 8
+                f"Loaded: {historical_filename}",  # 9
+            )
 
         except Exception as exc:
 
             if original_path:
-                original_path.unlink(missing_ok=True)
+                original_path.unlink(
+                    missing_ok=True
+                )
 
             if cog_path:
-                cog_path.unlink(missing_ok=True)
+                cog_path.unlink(
+                    missing_ok=True
+                )
 
-
-
-        return (
-            no_update,                         # 1 reference-raster-layer.url
-            no_update,                         # 2 reference-raster-layer.maxNativeZoom
-
-            asset.tile_url,                    # 3 historical-raster-layer.url
-            asset.maxzoom,                     # 4 historical-raster-layer.maxNativeZoom
-
-            asset.center,                      # 5 reference-map.center
-            zoom,                              # 6 reference-map.zoom
-
-            asset.center,                      # 7 historical-map.center
-            zoom,                              # 8 historical-map.zoom
-
-            no_update,                         # 9 reference-upload-status.children
-            f"Loaded: {historical_filename}",  # 10 historical-upload-status.children
-        )
+            return (
+                no_update,  # 1
+                no_update,  # 2
+                no_update,  # 3
+                no_update,  # 4
+                no_update,  # 5
+                no_update,  # 6
+                no_update,  # 7
+                no_update,  # 8
+                f"Upload failed: {exc}",  # 9
+            )
 
     return (
         no_update,
@@ -409,6 +458,8 @@ def handle_raster_upload(
         no_update,
     )
 
+
+
 @app.callback(
     Output("reference-raster-layer", "opacity"),
     Input("reference-opacity", "value"),
@@ -418,14 +469,45 @@ def update_reference_opacity(value):
     return value / 100
 
 
+# =========================================================
+# HISTORICAL OPACITY
+# =========================================================
+
 @app.callback(
-    Output("historical-raster-layer", "opacity"),
-    Input("historical-opacity", "value"),
+    Output(
+        {
+            "type": "historical-raster-layer",
+            "index": ALL,
+        },
+        "opacity",
+    ),
+
+    Input(
+        "historical-opacity",
+        "value",
+    ),
+
+    State(
+        {
+            "type": "historical-raster-layer",
+            "index": ALL,
+        },
+        "id",
+    ),
+
     prevent_initial_call=True,
 )
-def update_historical_opacity(value):
-    return value / 100
+def update_historical_opacity(
+    value,
+    layer_ids,
+):
 
+    opacity = value / 100.0
+
+    return [
+        opacity
+        for _ in layer_ids
+    ]
 # =========================================================
 # RUN
 # =========================================================

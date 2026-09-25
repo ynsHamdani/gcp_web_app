@@ -13,7 +13,6 @@ from rasterio.warp import transform_bounds
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 
-
 @dataclass
 class RasterAsset:
     name: str
@@ -292,4 +291,63 @@ def get_titiler_asset(
         ],
         minzoom,
         maxzoom,
+    )
+
+def calculate_fit_zoom(
+    bounds: list[float],
+    map_width: int = 800,
+    map_height: int = 500,
+    padding: float = 0.90,
+    max_zoom: int = 24,
+) -> int:
+    """
+    Calculate a practical Leaflet zoom level that fits
+    the complete raster extent inside the map.
+    
+    bounds = [west, south, east, north]
+    """
+
+    west, south, east, north = bounds
+
+    # Normalize longitude.
+    x1 = (west + 180.0) / 360.0
+    x2 = (east + 180.0) / 360.0
+
+    # Web Mercator normalized Y.
+    def mercator_y(lat):
+        lat = max(-85.05112878, min(85.05112878, lat))
+        lat_rad = math.radians(lat)
+
+        return (
+            1.0
+            - math.log(
+                math.tan(lat_rad)
+                + 1.0 / math.cos(lat_rad)
+            ) / math.pi
+        ) / 2.0
+
+    y1 = mercator_y(north)
+    y2 = mercator_y(south)
+
+    span_x = max(abs(x2 - x1), 1e-12)
+    span_y = max(abs(y2 - y1), 1e-12)
+
+    usable_width = map_width * padding
+    usable_height = map_height * padding
+
+    zoom_x = math.log2(
+        usable_width / (256.0 * span_x)
+    )
+
+    zoom_y = math.log2(
+        usable_height / (256.0 * span_y)
+    )
+
+    zoom = math.floor(
+        min(zoom_x, zoom_y)
+    )
+
+    return max(
+        1,
+        min(zoom, max_zoom),
     )
