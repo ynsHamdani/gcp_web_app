@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 from urllib.parse import quote
-from dash import Dash, Input, Output, State, ctx, no_update
-from flask import send_from_directory
+
 import dash_leaflet as dl
-from dash_extensions.javascript import Namespace
 from dash import (
+    ALL,
     Dash,
     Input,
     Output,
@@ -11,8 +12,14 @@ from dash import (
     Patch,
     ctx,
     no_update,
-    ALL
 )
+from dash_extensions.javascript import Namespace
+from flask import send_from_directory
+
+
+# =========================================================
+# CONFIG
+# =========================================================
 
 from config import (
     APP_BASE_URL,
@@ -23,6 +30,11 @@ from config import (
     HISTORICAL_COG_DIR,
 )
 
+
+# =========================================================
+# RASTER FUNCTIONS
+# =========================================================
+
 from maps.raster import (
     RasterAsset,
     save_uploaded_tiff,
@@ -32,8 +44,22 @@ from maps.raster import (
     calculate_fit_zoom,
 )
 
+
+# =========================================================
+# MAP LAYERS
+# =========================================================
+
 from maps.reference import create_reference_layers
-from maps.historical import create_historical_layers
+
+from maps.historical import (
+    create_historical_layers,
+    create_historical_overlay,
+)
+
+
+# =========================================================
+# UI
+# =========================================================
 
 from ui.layout import create_layout
 
@@ -63,22 +89,27 @@ MAP_STYLE = {
 
 
 # =========================================================
-# JAVASCRIPT SYNCHRONIZATION
+# JAVASCRIPT NAMESPACE
 # =========================================================
 
-ns = Namespace("gcpMapSync", "handlers")
+ns = Namespace(
+    "gcpMapSync",
+    "handlers",
+)
 
 
 # =========================================================
-# MAPS
+# REFERENCE MAP
 # =========================================================
 
 reference_map = dl.Map(
     id="reference-map",
+
     center=INITIAL_CENTER,
     zoom=INITIAL_ZOOM,
 
     eventHandlers={
+        "load": ns("registerReference"),
         "mouseover": ns("registerReference"),
         "mousedown": ns("registerReference"),
         "moveend": ns("syncReference"),
@@ -87,17 +118,22 @@ reference_map = dl.Map(
 
     children=create_reference_layers(),
 
-
     style=MAP_STYLE,
 )
 
 
+# =========================================================
+# HISTORICAL MAP
+# =========================================================
+
 historical_map = dl.Map(
     id="historical-map",
+
     center=INITIAL_CENTER,
     zoom=INITIAL_ZOOM,
 
     eventHandlers={
+        "load": ns("registerHistorical"),
         "mouseover": ns("registerHistorical"),
         "mousedown": ns("registerHistorical"),
         "moveend": ns("syncHistorical"),
@@ -111,7 +147,7 @@ historical_map = dl.Map(
 
 
 # =========================================================
-# PAGE
+# PAGE LAYOUT
 # =========================================================
 
 app.layout = create_layout(
@@ -149,38 +185,103 @@ def serve_historical_raster(filename):
 
 
 # =========================================================
-# TIFF UPLOADS
+# TIFF UPLOAD CALLBACK
 # =========================================================
 
 @app.callback(
 
+    # -----------------------------------------------------
     # Reference raster
-    Output("reference-raster-layer", "url"),
-    Output("reference-raster-layer", "maxNativeZoom"),
+    # -----------------------------------------------------
 
+    Output(
+        "reference-raster-layer",
+        "url",
+    ),
+
+    Output(
+        "reference-raster-layer",
+        "maxNativeZoom",
+    ),
+
+    # -----------------------------------------------------
     # Historical layers
-    Output("historical-layer-control", "children"),
+    # -----------------------------------------------------
 
-    # Reference map viewport
-    Output("reference-map", "center"),
-    Output("reference-map", "zoom"),
+    Output(
+        "historical-layer-control",
+        "children",
+    ),
 
-    # Historical map viewport
-    Output("historical-map", "center"),
-    Output("historical-map", "zoom"),
+    # -----------------------------------------------------
+    # Reference map view
+    # -----------------------------------------------------
 
-    # Status
-    Output("reference-upload-status", "children"),
-    Output("historical-upload-status", "children"),
+    Output(
+        "reference-map",
+        "center",
+    ),
 
+    Output(
+        "reference-map",
+        "zoom",
+    ),
+
+    # -----------------------------------------------------
+    # Historical map view
+    # -----------------------------------------------------
+
+    Output(
+        "historical-map",
+        "center",
+    ),
+
+    Output(
+        "historical-map",
+        "zoom",
+    ),
+
+    # -----------------------------------------------------
+    # Upload status
+    # -----------------------------------------------------
+
+    Output(
+        "reference-upload-status",
+        "children",
+    ),
+
+    Output(
+        "historical-upload-status",
+        "children",
+    ),
+
+    # -----------------------------------------------------
     # Inputs
-    Input("reference-upload", "contents"),
-    Input("historical-upload", "contents"),
+    # -----------------------------------------------------
 
-    # State
-    State("reference-upload", "filename"),
-    State("historical-upload", "filename"),
-    State("historical-opacity", "value"),
+    Input(
+        "reference-upload",
+        "contents",
+    ),
+
+    Input(
+        "historical-upload",
+        "contents",
+    ),
+
+    # -----------------------------------------------------
+    # Filenames
+    # -----------------------------------------------------
+
+    State(
+        "reference-upload",
+        "filename",
+    ),
+
+    State(
+        "historical-upload",
+        "filename",
+    ),
 
     prevent_initial_call=True,
 )
@@ -189,10 +290,10 @@ def handle_raster_upload(
     historical_contents,
     reference_filename,
     historical_filename,
-    historical_opacity,
 ):
 
     triggered = ctx.triggered_id
+
 
     # =====================================================
     # REFERENCE TIFF
@@ -205,31 +306,55 @@ def handle_raster_upload(
 
         try:
 
+            # -------------------------------------------------
+            # Save original TIFF
+            # -------------------------------------------------
+
             original_path = save_uploaded_tiff(
                 reference_contents,
                 reference_filename,
                 REFERENCE_ORIGINAL_DIR,
             )
 
+            # -------------------------------------------------
+            # Validate
+            # -------------------------------------------------
+
             validate_geotiff(
                 original_path
             )
+
+            # -------------------------------------------------
+            # COG path
+            # -------------------------------------------------
 
             cog_path = (
                 REFERENCE_COG_DIR
                 / f"{original_path.stem}_cog.tif"
             )
 
+            # -------------------------------------------------
+            # Convert TIFF -> COG
+            # -------------------------------------------------
+
             convert_to_cog(
                 original_path,
                 cog_path,
             )
+
+            # -------------------------------------------------
+            # URL accessible by TiTiler
+            # -------------------------------------------------
 
             raster_url = (
                 f"{APP_BASE_URL}"
                 f"/raster/reference/"
                 f"{quote(cog_path.name)}"
             )
+
+            # -------------------------------------------------
+            # TiTiler metadata + tile URL
+            # -------------------------------------------------
 
             (
                 tile_url,
@@ -242,6 +367,10 @@ def handle_raster_upload(
                 cog_path,
             )
 
+            # -------------------------------------------------
+            # Raster asset
+            # -------------------------------------------------
+
             asset = RasterAsset(
                 name=reference_filename,
                 original_path=original_path,
@@ -252,25 +381,33 @@ def handle_raster_upload(
                 maxzoom=maxzoom,
             )
 
+            # -------------------------------------------------
+            # Fit map to reference raster
+            # -------------------------------------------------
+
             zoom = calculate_fit_zoom(
                 asset.bounds
             )
 
+            # -------------------------------------------------
+            # Return
+            # -------------------------------------------------
+
             return (
 
-                asset.tile_url,
-                asset.maxzoom,
+                asset.tile_url,                  # 1
+                asset.maxzoom,                   # 2
 
-                no_update,
+                no_update,                       # 3 historical layers
 
-                asset.center,
-                zoom,
+                asset.center,                    # 4 reference center
+                zoom,                            # 5 reference zoom
 
-                asset.center,
-                zoom,
+                asset.center,                    # 6 historical center
+                zoom,                            # 7 historical zoom
 
-                f"Loaded: {reference_filename}",
-                no_update,
+                f"Loaded: {reference_filename}", # 8
+                no_update,                       # 9
             )
 
         except Exception as exc:
@@ -286,16 +423,15 @@ def handle_raster_upload(
                 )
 
             return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                f"Upload failed: {exc}",
-                no_update,
+                no_update,                       # 1
+                no_update,                       # 2
+                no_update,                       # 3
+                no_update,                       # 4
+                no_update,                       # 5
+                no_update,                       # 6
+                no_update,                       # 7
+                f"Upload failed: {exc}",         # 8
+                no_update,                       # 9
             )
 
 
@@ -310,31 +446,55 @@ def handle_raster_upload(
 
         try:
 
+            # -------------------------------------------------
+            # Save original TIFF
+            # -------------------------------------------------
+
             original_path = save_uploaded_tiff(
                 historical_contents,
                 historical_filename,
                 HISTORICAL_ORIGINAL_DIR,
             )
 
+            # -------------------------------------------------
+            # Validate
+            # -------------------------------------------------
+
             validate_geotiff(
                 original_path
             )
+
+            # -------------------------------------------------
+            # COG path
+            # -------------------------------------------------
 
             cog_path = (
                 HISTORICAL_COG_DIR
                 / f"{original_path.stem}_cog.tif"
             )
 
+            # -------------------------------------------------
+            # Convert TIFF -> COG
+            # -------------------------------------------------
+
             convert_to_cog(
                 original_path,
                 cog_path,
             )
+
+            # -------------------------------------------------
+            # URL accessible by TiTiler
+            # -------------------------------------------------
 
             raster_url = (
                 f"{APP_BASE_URL}"
                 f"/raster/historical/"
                 f"{quote(cog_path.name)}"
             )
+
+            # -------------------------------------------------
+            # TiTiler metadata + tile URL
+            # -------------------------------------------------
 
             (
                 tile_url,
@@ -347,6 +507,10 @@ def handle_raster_upload(
                 cog_path,
             )
 
+            # -------------------------------------------------
+            # Raster asset
+            # -------------------------------------------------
+
             asset = RasterAsset(
                 name=historical_filename,
                 original_path=original_path,
@@ -358,7 +522,7 @@ def handle_raster_upload(
             )
 
             # -------------------------------------------------
-            # Correct zoom for THIS new raster
+            # Calculate zoom for NEW historical image
             # -------------------------------------------------
 
             zoom = calculate_fit_zoom(
@@ -366,60 +530,53 @@ def handle_raster_upload(
             )
 
             # -------------------------------------------------
-            # Unique layer ID
+            # Create new historical overlay
             # -------------------------------------------------
 
-            layer_id = {
-                "type": "historical-raster-layer",
-                "index": cog_path.stem,
-            }
-
-            # -------------------------------------------------
-            # New historical layer
-            # -------------------------------------------------
-
-            new_layer = dl.Overlay(
-
-                dl.TileLayer(
-                    id=layer_id,
-                    url=asset.tile_url,
-                    opacity=(
-                        historical_opacity / 100
-                        if historical_opacity is not None
-                        else 1.0
-                    ),
-                    tileSize=256,
-                    maxZoom=24,
-                    zIndex=10,
-                ),
-
-                name=historical_filename,
-                checked=True,
+            new_layer = create_historical_overlay(
+                asset=asset,
+                filename=historical_filename,
+                opacity=1.0,
             )
 
             # -------------------------------------------------
-            # Append without recreating the map
+            # Append without replacing existing layers
             # -------------------------------------------------
 
             patched_layers = Patch()
+
             patched_layers.append(
                 new_layer
             )
 
+            # -------------------------------------------------
+            # Set BOTH maps to the new raster extent
+            # -------------------------------------------------
+            #
+            # Because both maps receive exactly the same
+            # center and zoom in the same Dash update, the
+            # existing JS synchronization should not fight
+            # the new view.
+            # -------------------------------------------------
+
             return (
+
                 no_update,                         # 1
                 no_update,                         # 2
-                patched_layers,                    # 3
 
-                asset.center,                      # 4
-                zoom,                              # 5
+                patched_layers,                     # 3
 
-                asset.center,                      # 6
-                zoom,                              # 7
+                asset.center,                       # 4
+                zoom,                               # 5
 
-                no_update,                         # 8
-                f"Loaded: {historical_filename}",  # 9
+                asset.center,                       # 6
+                zoom,                               # 7
+
+                no_update,                          # 8
+
+                f"Loaded: {historical_filename}",   # 9
             )
+        
 
         except Exception as exc:
 
@@ -434,39 +591,56 @@ def handle_raster_upload(
                 )
 
             return (
-                no_update,  # 1
-                no_update,  # 2
-                no_update,  # 3
-                no_update,  # 4
-                no_update,  # 5
-                no_update,  # 6
-                no_update,  # 7
-                no_update,  # 8
-                f"Upload failed: {exc}",  # 9
+                no_update,                          # 1
+                no_update,                          # 2
+                no_update,                          # 3
+                no_update,                          # 4
+                no_update,                          # 5
+                no_update,                          # 6
+                no_update,                          # 7
+                no_update,                          # 8
+                f"Upload failed: {exc}",            # 9
             )
 
+
+    # =====================================================
+    # FALLBACK
+    # =====================================================
+
     return (
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
+        no_update,      # 1
+        no_update,      # 2
+        no_update,      # 3
+        no_update,      # 4
+        no_update,      # 5
+        no_update,      # 6
+        no_update,      # 7
+        no_update,      # 8
+        no_update,      # 9
     )
 
 
+# =========================================================
+# REFERENCE OPACITY
+# =========================================================
 
 @app.callback(
-    Output("reference-raster-layer", "opacity"),
-    Input("reference-opacity", "value"),
+
+    Output(
+        "reference-raster-layer",
+        "opacity",
+    ),
+
+    Input(
+        "reference-opacity",
+        "value",
+    ),
+
     prevent_initial_call=True,
 )
 def update_reference_opacity(value):
-    return value / 100
+
+    return value / 100.0
 
 
 # =========================================================
@@ -474,6 +648,7 @@ def update_reference_opacity(value):
 # =========================================================
 
 @app.callback(
+
     Output(
         {
             "type": "historical-raster-layer",
@@ -508,9 +683,14 @@ def update_historical_opacity(
         opacity
         for _ in layer_ids
     ]
+
+
 # =========================================================
 # RUN
 # =========================================================
 
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    app.run(
+        debug=True
+    )
