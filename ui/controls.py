@@ -1,89 +1,138 @@
-from dash import html, dcc
+from __future__ import annotations
+
+from dash import dcc, html
 
 
-def upload_control(
-    component_id: str,
-    label: str,
+# =========================================================
+# COMMON STYLES
+# =========================================================
+
+ZOOM_CONTROL_STYLE = {
+    "position": "fixed",
+    "top": "180px",
+    "zIndex": "1000",
+    "width": "280px",
+    "backgroundColor": "white",
+    "padding": "12px",
+    "borderRadius": "8px",
+    "boxShadow": "0 2px 10px rgba(0,0,0,0.15)",
+}
+
+ZOOM_BUTTON_STYLE = {
+    "marginTop": "8px",
+    "width": "100%",
+    "cursor": "pointer",
+}
+
+ZOOM_TITLE_STYLE = {
+    "fontWeight": "600",
+    "marginBottom": "6px",
+}
+
+
+# =========================================================
+# LAYER ZOOM CONTROL
+# =========================================================
+
+
+def create_layer_zoom_control(
+    map_type: str,
+    title: str,
+    placeholder: str,
 ):
-    return dcc.Upload(
-        id=component_id,
-        children=html.Button(
-            label,
-            className="upload-button",
+    """Create a layer selector and synchronized zoom button."""
+
+    if map_type not in {"reference", "historical"}:
+        raise ValueError(
+            "map_type must be 'reference' or 'historical'"
+        )
+
+    position_style = {
+        **ZOOM_CONTROL_STYLE,
+        "left": (
+            "20px"
+            if map_type == "reference"
+            else "calc(50% + 20px)"
         ),
-        multiple=False,
-        accept=".tif,.tiff",
+    }
+
+    return html.Div(
+        [
+            html.Div(
+                title,
+                style=ZOOM_TITLE_STYLE,
+            ),
+            dcc.Dropdown(
+                id=f"{map_type}-layer-zoom-select",
+                options=[],
+                value=None,
+                placeholder=placeholder,
+                clearable=False,
+            ),
+            html.Button(
+                "Zoom to layer",
+                id=f"{map_type}-layer-zoom-button",
+                n_clicks=0,
+                style=ZOOM_BUTTON_STYLE,
+            ),
+        ],
+        style=position_style,
     )
 
 
-def opacity_control(
-    component_id: str,
-):
+# =========================================================
+# BOTH MAP ZOOM CONTROLS
+# =========================================================
+
+
+def create_zoom_controls():
+    """Create the layer-navigation controls for both map panels."""
+
+    return [
+        create_layer_zoom_control(
+            map_type="reference",
+            title="Zoom to reference layer",
+            placeholder="Select a reference map...",
+        ),
+        create_layer_zoom_control(
+            map_type="historical",
+            title="Zoom to historical layer",
+            placeholder="Select a historical map...",
+        ),
+    ]
+
+
+# =========================================================
+# APP LAYOUT COMPATIBILITY WRAPPER
+# =========================================================
+
+
+def create_app_layout(reference_map, historical_map):
+    """Build the complete application layout.
+
+    The import of create_layout is deliberately local. This keeps
+    controls.py independent at module-import time and avoids the
+    circular dependency that existed between layout.py and controls.py.
+    """
+
+    # Local import is intentional:
+    # layout.py does not import this module, so there is no cycle.
+    from ui.layout import create_layout
+
     return html.Div(
-        className="opacity-control",
-        children=[
-            html.Span(
-                "Opacity",
-                className="opacity-label",
+        [
+            create_layout(
+                reference_map=reference_map,
+                historical_map=historical_map,
             ),
-            dcc.Slider(
-                id=component_id,
-                min=0,
-                max=100,
-                step=5,
-                value=100,
-                marks=None,
-                tooltip={
-                    "placement": "top",
-                    "always_visible": False,
-                },
+            *create_zoom_controls(),
+            dcc.Store(
+                id="reference-layer-registry",
+                data=[],
             ),
-        ],
-    )
-
-
-def bottom_controls():
-    return html.Div(
-        className="bottom-controls",
-        children=[
-
-            html.Div(
-                className="gcp-status-block",
-                children=[
-                    html.Div(
-                        "GCP 001",
-                        className="gcp-title",
-                    ),
-                    html.Div(
-                        "Select corresponding features in the two maps",
-                        id="gcp-status",
-                        className="gcp-status",
-                    ),
-                ],
+            dcc.Store(
+                id="historical-layer-registry",
+                data=[],
             ),
-
-            html.Div(
-                className="gcp-buttons",
-                children=[
-                    html.Button(
-                        "Add GCP",
-                        id="add-gcp-button",
-                        className="primary-button",
-                    ),
-
-                    html.Button(
-                        "Save GCP",
-                        id="save-gcp-button",
-                        disabled=True,
-                        className="secondary-button",
-                    ),
-
-                    html.Button(
-                        "Next",
-                        id="next-button",
-                        className="secondary-button",
-                    ),
-                ],
-            ),
-        ],
+        ]
     )
