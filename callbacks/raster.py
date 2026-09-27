@@ -1,28 +1,22 @@
 from __future__ import annotations
 
-from urllib.parse import quote
+"""Dash callbacks and Flask routes for temporary raster uploads."""
 
 from dash import Input, Output, State, no_update
-from dash import ctx
-from flask import send_from_directory
+from flask import send_file
 
 from config import (
+    TEMP_RASTER_DIR,
+    TEMP_RASTER_TTL_HOURS,
     APP_BASE_URL,
     TITILER_URL,
-    REFERENCE_ORIGINAL_DIR,
-    REFERENCE_COG_DIR,
-    HISTORICAL_ORIGINAL_DIR,
-    HISTORICAL_COG_DIR,
 )
 
 from maps.map_views import build_layer_children
 from maps.raster import (
-    RasterAsset,
     calculate_fit_zoom,
-    convert_to_cog,
-    get_titiler_asset,
-    save_uploaded_tiff,
-    validate_geotiff,
+    cleanup_expired_temp_rasters,
+    prepare_uploaded_raster,
 )
 
 
@@ -30,26 +24,28 @@ from maps.raster import (
 # ROUTES
 # =========================================================
 
-def register_raster_routes(app):
-    """Register the Flask routes that make COGs reachable by TiTiler."""
 
-    @app.server.route(
-        "/raster/reference/<path:filename>"
-    )
-    def serve_reference_raster(filename):
-        return send_from_directory(
-            str(REFERENCE_COG_DIR),
-            filename,
-            conditional=True,
+def register_raster_routes(app):
+    """Register temporary-raster routes used by TiTiler."""
+
+    @app.server.route("/raster/<path:relative_path>")
+    def serve_temp_raster(relative_path):
+        """Serve one temporary COG and refresh its TTL timestamp."""
+
+        from maps.raster import (
+            get_temp_raster_path,
+            touch_cached_raster_from_relative_path,
         )
 
-    @app.server.route(
-        "/raster/historical/<path:filename>"
-    )
-    def serve_historical_raster(filename):
-        return send_from_directory(
-            str(HISTORICAL_COG_DIR),
-            filename,
+        try:
+            # Accessing a raster keeps its cache entry alive.
+            touch_cached_raster_from_relative_path(relative_path)
+            path = get_temp_raster_path(relative_path)
+        except (ValueError, FileNotFoundError):
+            return ("Raster not found.", 404)
+
+        return send_file(
+            path,
             conditional=True,
         )
 
@@ -58,110 +54,21 @@ def register_raster_routes(app):
 # HELPERS
 # =========================================================
 
-def _upload_raster(
-    contents,
-    filename,
-    original_dir,
-    cog_dir,
-    raster_route,
-    opacity_percent,
-):
-    """Save, validate, convert and prepare one uploaded GeoTIFF."""
 
-    if not contents or not filename:
-        raise ValueError("No raster file was provided.")
+def _layer_options(layer_registry):
+    """Convert registry entries into Dash Dropdown options."""
 
-    original_path = None
-    cog_path = None
-
-    try:
-        original_path = save_uploaded_tiff(
-            contents,
-            filename,
-            original_dir,
-        )
-
-        validate_geotiff(
-            original_path
-        )
-
-        cog_path = (
-            cog_dir
-            / f"{original_path.stem}_cog.tif"
-        )
-
-        convert_to_cog(
-            original_path,
-            cog_path,
-        )
-
-        raster_url = (
-            f"{APP_BASE_URL}"
-            f"{raster_route}"
-            f"{quote(cog_path.name)}"
-        )
-
-        (
-            tile_url,
-            bounds,
-            minzoom,
-            maxzoom,
-        ) = get_titiler_asset(
-            raster_url,
-            TITILER_URL,
-            cog_path,
-        )
-
-        asset = RasterAsset(
-            name=filename,
-            original_path=original_path,
-            cog_path=cog_path,
-            tile_url=tile_url,
-            bounds=bounds,
-            minzoom=minzoom,
-            maxzoom=maxzoom,
-        )
-
-        opacity = (
-            opacity_percent / 100.0
-            if opacity_percent is not None
-            else 1.0
-        )
-
-        entry = {
-            "id": asset.cog_path.stem,
-            "name": filename,
-            "original_path": str(asset.original_path),
-            "cog_path": str(asset.cog_path),
-            "tile_url": asset.tile_url,
-            "bounds": asset.bounds,
-            "center": asset.center,
-            "zoom": calculate_fit_zoom(
-                asset.bounds
-            ),
-            "minzoom": asset.minzoom,
-            "maxzoom": asset.maxzoom,
-            "opacity": opacity,
+    return [
+        {
+            "label": item["name"],
+            "value": item["id"],
         }
-
-        return asset, entry
-
-    except Exception:
-        if original_path:
-            original_path.unlink(
-                missing_ok=True
-            )
-
-        if cog_path:
-            cog_path.unlink(
-                missing_ok=True
-            )
-
-        raise
+        for item in (layer_registry or [])
+    ]
 
 
 def _update_registry(layer_registry, new_entry):
-    """Replace an existing entry with the same id, otherwise append it."""
+    """Replace an entry with the same ID, otherwise append it."""
 
     registry = [
         item
@@ -173,22 +80,48 @@ def _update_registry(layer_registry, new_entry):
     return registry
 
 
-def _layer_options(layer_registry):
-    return [
-        {
-            "label": item["name"],
-            "value": item["id"],
-        }
-        for item in (layer_registry or [])
-    ]
+def _raster_entry(asset, filename, opacity_percent):
+    """Create the JSON-safe layer registry entry for one temporary COG."""
+
+    opacity = (
+        float(opacity_percent) / 100.0
+        if opacity_percent is not None
+        else 1.0
+    )
+
+    # The SHA-256 directory/file stem is the stable layer identity.
+    layer_id = asset.cog_path.stem
+
+    return {
+        "id": layer_id,
+        "name": filename,
+        "original_path": "",
+        "cog_path": str(asset.cog_path),
+        "tile_url": asset.tile_url,
+        "bounds": asset.bounds,
+        "center": asset.center,
+        "zoom": calculate_fit_zoom(asset.bounds),
+        "minzoom": asset.minzoom,
+        "maxzoom": asset.maxzoom,
+        "opacity": opacity,
+    }
 
 
 # =========================================================
 # CALLBACKS
 # =========================================================
 
+
 def register_raster_callbacks(app):
-    """Register reference and historical raster-upload callbacks."""
+    """Register reference and historical upload callbacks."""
+
+    # Opportunistic cleanup when the application starts registering callbacks.
+    # The actual TTL enforcement also happens when uploads/routes are used.
+    cleanup_expired_temp_rasters(TEMP_RASTER_TTL_HOURS)
+
+    # -----------------------------------------------------
+    # REFERENCE UPLOAD
+    # -----------------------------------------------------
 
     @app.callback(
         Output(
@@ -245,13 +178,16 @@ def register_raster_callbacks(app):
             )
 
         try:
-            asset, entry = _upload_raster(
+            asset = prepare_uploaded_raster(
                 contents=contents,
                 filename=filename,
-                original_dir=REFERENCE_ORIGINAL_DIR,
-                cog_dir=REFERENCE_COG_DIR,
-                raster_route="/raster/reference/",
-                opacity_percent=reference_opacity,
+                raster_kind="reference",
+            )
+
+            entry = _raster_entry(
+                asset,
+                filename,
+                reference_opacity,
             )
 
             registry = _update_registry(
@@ -282,6 +218,10 @@ def register_raster_callbacks(app):
                 no_update,
                 no_update,
             )
+
+    # -----------------------------------------------------
+    # HISTORICAL UPLOAD
+    # -----------------------------------------------------
 
     @app.callback(
         Output(
@@ -338,13 +278,16 @@ def register_raster_callbacks(app):
             )
 
         try:
-            asset, entry = _upload_raster(
+            asset = prepare_uploaded_raster(
                 contents=contents,
                 filename=filename,
-                original_dir=HISTORICAL_ORIGINAL_DIR,
-                cog_dir=HISTORICAL_COG_DIR,
-                raster_route="/raster/historical/",
-                opacity_percent=historical_opacity,
+                raster_kind="historical",
+            )
+
+            entry = _raster_entry(
+                asset,
+                filename,
+                historical_opacity,
             )
 
             registry = _update_registry(
