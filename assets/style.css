@@ -6,13 +6,23 @@ body {
     overflow: hidden;
 }
 
-.app-container {
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
+body {
     font-family: Arial, sans-serif;
     background: #f4f6f8;
 }
+
+.app-container {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: #f4f6f8;
+}
+
+/* =========================================================
+   HEADER
+   ========================================================= */
 
 .app-header {
     height: 64px;
@@ -23,25 +33,31 @@ body {
     padding: 0 22px;
     background: #1f2937;
     color: white;
+    box-sizing: border-box;
 }
 
 .app-title {
     font-size: 20px;
     font-weight: 600;
+    line-height: 1.2;
 }
 
 .app-subtitle {
     margin-top: 3px;
     font-size: 12px;
-    opacity: 0.75;
+    color: rgba(255, 255, 255, 0.72);
 }
 
 .prototype-badge {
     font-size: 11px;
     padding: 5px 10px;
-    border: 1px solid rgba(255,255,255,0.3);
+    border: 1px solid rgba(255, 255, 255, 0.30);
     border-radius: 12px;
 }
+
+/* =========================================================
+   MAP AREA
+   ========================================================= */
 
 .maps-area {
     flex: 1;
@@ -49,94 +65,215 @@ body {
     display: flex;
     gap: 8px;
     padding: 8px;
+    box-sizing: border-box;
 }
 
 .map-panel {
-    flex: 1;
+    flex: 1 1 0;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    background: white;
-    border-radius: 6px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 7px;
     overflow: hidden;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10);
 }
 
-.map-header {
+/* =========================================================
+   MAP HEADER
+   ========================================================= */
+
+.map-panel-header {
     height: 48px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     padding: 0 12px;
     border-bottom: 1px solid #e5e7eb;
+    background: #ffffff;
+    box-sizing: border-box;
 }
 
-.map-title {
+.map-panel-title {
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.5px;
+    line-height: 1.2;
 }
 
-.map-subtitle {
+.map-panel-subtitle {
     margin-top: 2px;
     font-size: 10px;
     color: #6b7280;
+    line-height: 1.2;
 }
 
-.map-status {
-    height: 28px;
-    box-sizing: border-box;
-    padding: 6px 12px;
+/* =========================================================
+   UPLOAD
+   ========================================================= */
+
+.upload-button {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 5px;
+    background: #ffffff;
+    color: #374151;
+    cursor: pointer;
     font-size: 11px;
-    color: #6b7280;
-    background: #fafafa;
-    border-bottom: 1px solid #f0f0f0;
+    line-height: 1.2;
+    white-space: nowrap;
 }
 
-.map-container {
-    flex: 1;
-    min-height: 0;
+.upload-button:hover {
+    background: #f9fafb;
+    border-color: #9ca3af;
 }
 
-.map-container > div {
-    height: 100% !important;
-}
+/* =========================================================
+   STATUS
+   ========================================================= */
 
-.map-footer {
-    height: 42px;
+.map-panel-status {
+    height: 28px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     padding: 0 12px;
-    border-top: 1px solid #e5e7eb;
+    box-sizing: border-box;
+    background: #fafafa;
+    border-bottom: 1px solid #f0f0f0;
 }
 
-.opacity-control {
-    width: 220px;
+.upload-status {
+    width: 100%;
+    font-size: 11px;
+    color: #6b7280;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* =========================================================
+   OPACITY
+   ========================================================= */
+
+.map-panel-opacity {
+    height: 44px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: 10px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
 }
 
 .opacity-label {
+    flex: 0 0 auto;
+    margin: 0;
     font-size: 11px;
     color: #6b7280;
     white-space: nowrap;
 }
 
-.upload-button {
-    padding: 6px 10px;
-    border: 1px solid #d1d5db;
-    border-radius: 5px;
-    background: white;
-    cursor: pointer;
-    font-size: 11px;
+.map-panel-opacity > div {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
-.upload-button:hover {
-    background: #f9fafb;
+.map-panel-opacity .rc-slider {
+    width: 100%;
+    margin: 0;
 }
+
+.map-panel-opacity .rc-slider-mark-text {
+    font-size: 9px;
+    color: #9ca3af;
+}
+
+/* =========================================================
+   MAP
+   ========================================================= */
+
+.map-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+}
+
+.map-container > div {
+    width: 100%;
+    height: 100% !important;
+}
+
+.leaflet-container {
+    width: 100%;
+    height: 100%;
+    font-family: Arial, sans-serif;
+}
+
+/* =========================================================
+   LEAFLET CONTROLS
+   ========================================================= */
+
+.leaflet-control-layers {
+    border-radius: 6px;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.20);
+}
+
+.leaflet-control-layers-toggle {
+    width: 36px;
+    height: 36px;
+}
+
+/* =========================================================
+   ZOOM CONTROLS
+   ========================================================= */
+
+.dash-dropdown {
+    font-size: 12px;
+}
+
+button {
+    font-family: Arial, sans-serif;
+}
+
+button:hover {
+    filter: brightness(0.98);
+}
+
+/* =========================================================
+   TABLE
+   ========================================================= */
+
+.table-section {
+    height: 190px;
+    flex-shrink: 0;
+    padding: 8px 12px 12px;
+    background: #ffffff;
+    border-top: 1px solid #e5e7eb;
+    box-sizing: border-box;
+}
+
+.table-title {
+    height: 24px;
+    display: flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #6b7280;
+}
+
+/* =========================================================
+   OPTIONAL GCP CONTROLS
+   ========================================================= */
 
 .bottom-controls {
     height: 74px;
@@ -145,8 +282,9 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 0 18px;
-    background: white;
+    background: #ffffff;
     border-top: 1px solid #e5e7eb;
+    box-sizing: border-box;
 }
 
 .gcp-title {
@@ -176,28 +314,51 @@ body {
 .primary-button {
     border: none;
     background: #2563eb;
-    color: white;
+    color: #ffffff;
 }
 
 .secondary-button {
     border: 1px solid #d1d5db;
-    background: white;
+    background: #ffffff;
     color: #374151;
 }
 
-.table-section {
-    height: 190px;
-    flex-shrink: 0;
-    padding: 8px 12px 12px;
-    background: white;
-    border-top: 1px solid #e5e7eb;
-    box-sizing: border-box;
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 900px) {
+    .maps-area {
+        gap: 6px;
+        padding: 6px;
+    }
+
+    .map-panel-header {
+        padding: 0 10px;
+        gap: 8px;
+    }
+
+    .upload-button {
+        padding: 5px 8px;
+        font-size: 10px;
+    }
+
+    .map-panel-opacity {
+        padding: 0 10px;
+        gap: 8px;
+    }
 }
 
-.table-title {
-    height: 24px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: #6b7280;
+@media (max-width: 700px) {
+    .app-title {
+        font-size: 17px;
+    }
+
+    .app-subtitle {
+        font-size: 10px;
+    }
+
+    .maps-area {
+        flex-direction: column;
+    }
 }

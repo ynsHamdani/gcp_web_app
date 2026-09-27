@@ -9,11 +9,11 @@ from dash import dcc, html
 
 ZOOM_CONTROL_STYLE = {
     "position": "fixed",
-    "top": "180px",
+    "top": "195px",
     "zIndex": "1000",
     "width": "280px",
     "backgroundColor": "white",
-    "padding": "12px",
+    "padding": "14px",
     "borderRadius": "8px",
     "boxShadow": "0 2px 10px rgba(0,0,0,0.15)",
 }
