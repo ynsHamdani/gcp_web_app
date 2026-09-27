@@ -1,99 +1,92 @@
-window.gcpMapSync = Object.assign(
-    {},
-    window.gcpMapSync,
-    {
-        handlers: {
+window.gcpMapSync = Object.assign({}, window.gcpMapSync, {
+    handlers: {
 
-            // =================================================
-            // REGISTER MAPS
-            // =================================================
+        // =================================================
+        // REGISTER REFERENCE MAP
+        // =================================================
 
-            registerReference: function(e, ctx) {
+        registerReference: function(e, ctx) {
 
-                window.gcpMapSyncState =
-                    window.gcpMapSyncState || {};
+            window.gcpMapSyncState =
+                window.gcpMapSyncState || {};
 
-                window.gcpMapSyncState.reference =
-                    ctx.map;
-            },
+            window.gcpMapSyncState.reference =
+                ctx.map;
+        },
 
 
-            registerHistorical: function(e, ctx) {
+        // =================================================
+        // REGISTER HISTORICAL MAP
+        // =================================================
 
-                window.gcpMapSyncState =
-                    window.gcpMapSyncState || {};
+        registerHistorical: function(e, ctx) {
 
-                window.gcpMapSyncState.historical =
-                    ctx.map;
-            },
+            window.gcpMapSyncState =
+                window.gcpMapSyncState || {};
 
-
-            // =================================================
-            // REFERENCE -> HISTORICAL
-            // =================================================
-
-            syncReference: function(e, ctx) {
-
-                const state =
-                    window.gcpMapSyncState;
-
-                if (
-                    !state ||
-                    !state.historical
-                ) {
-                    return;
-                }
-
-                if (
-                    state.fittingNewLayer
-                ) {
-                    return;
-                }
-
-                syncMapView(
-                    ctx.map,
-                    state.historical
-                );
-            },
+            window.gcpMapSyncState.historical =
+                ctx.map;
+        },
 
 
-            // =================================================
-            // HISTORICAL -> REFERENCE
-            // =================================================
+        // =================================================
+        // REFERENCE -> HISTORICAL
+        // =================================================
 
-            syncHistorical: function(e, ctx) {
+        syncReference: function(e, ctx) {
 
-                const state =
-                    window.gcpMapSyncState;
+            const state =
+                window.gcpMapSyncState;
 
-                if (
-                    !state ||
-                    !state.reference
-                ) {
-                    return;
-                }
-
-                if (
-                    state.fittingNewLayer
-                ) {
-                    return;
-                }
-
-                syncMapView(
-                    ctx.map,
-                    state.reference
-                );
+            if (
+                !state ||
+                !state.historical
+            ) {
+                return;
             }
+
+            syncMapViewDebounced(
+                ctx.map,
+                state.historical
+            );
+        },
+
+
+        // =================================================
+        // HISTORICAL -> REFERENCE
+        // =================================================
+
+        syncHistorical: function(e, ctx) {
+
+            const state =
+                window.gcpMapSyncState;
+
+            if (
+                !state ||
+                !state.reference
+            ) {
+                return;
+            }
+
+            syncMapViewDebounced(
+                ctx.map,
+                state.reference
+            );
         }
     }
-);
+});
 
 
 // =========================================================
-// SYNCHRONIZE MAP VIEW
+// SYNCHRONIZE MAPS
+// =========================================================
+//
+// Small debounce prevents the first programmatic zoom
+// ("Zoom to layer") from being immediately overwritten by
+// the other map's moveend/zoomend event.
 // =========================================================
 
-function syncMapView(
+function syncMapViewDebounced(
     source,
     target
 ) {
@@ -101,69 +94,113 @@ function syncMapView(
     const state =
         window.gcpMapSyncState;
 
-    if (
-        !state ||
-        state.fittingNewLayer
-    ) {
+    if (!state) {
         return;
     }
 
-    const sourceCenter =
-        source.getCenter();
-
-    const sourceZoom =
-        source.getZoom();
-
-    const targetCenter =
-        target.getCenter();
-
-    const targetZoom =
-        target.getZoom();
-
-    const sameView =
-        sourceZoom === targetZoom &&
-        Math.abs(
-            sourceCenter.lat -
-            targetCenter.lat
-        ) < 1e-10 &&
-        Math.abs(
-            sourceCenter.lng -
-            targetCenter.lng
-        ) < 1e-10;
-
-    if (sameView) {
+    // Do not interfere with a coordinated map movement.
+    if (state.fittingLayer) {
         return;
     }
 
-    if (target._gcpSyncLocked) {
-        return;
+
+    // Cancel any previous pending sync.
+    if (source._gcpSyncTimer) {
+
+        clearTimeout(
+            source._gcpSyncTimer
+        );
     }
 
-    target._gcpSyncLocked = true;
 
-    target.setView(
-        sourceCenter,
-        sourceZoom,
-        {
-            animate: false
-        }
-    );
+    // Wait briefly for Leaflet to finish its current
+    // movement/zoom operation.
+    source._gcpSyncTimer =
+        setTimeout(
+            function() {
 
-    setTimeout(
-        function() {
-            target._gcpSyncLocked = false;
-        },
-        100
-    );
+                if (state.fittingLayer) {
+                    return;
+                }
+
+
+                const sourceCenter =
+                    source.getCenter();
+
+                const sourceZoom =
+                    source.getZoom();
+
+                const targetCenter =
+                    target.getCenter();
+
+                const targetZoom =
+                    target.getZoom();
+
+
+                const sameView =
+                    sourceZoom === targetZoom &&
+                    Math.abs(
+                        sourceCenter.lat -
+                        targetCenter.lat
+                    ) < 1e-10 &&
+                    Math.abs(
+                        sourceCenter.lng -
+                        targetCenter.lng
+                    ) < 1e-10;
+
+
+                if (sameView) {
+                    return;
+                }
+
+
+                // Prevent the resulting target events
+                // from immediately bouncing back.
+                if (target._gcpSyncLocked) {
+                    return;
+                }
+
+
+                target._gcpSyncLocked = true;
+
+
+                target.setView(
+                    sourceCenter,
+                    sourceZoom,
+                    {
+                        animate: false
+                    }
+                );
+
+
+                // Keep the lock long enough for Leaflet's
+                // moveend/zoomend events to finish.
+                setTimeout(
+                    function() {
+
+                        target._gcpSyncLocked =
+                            false;
+
+                    },
+                    250
+                );
+
+            },
+            100
+        );
 }
 
 
 // =========================================================
-// FIT NEW HISTORICAL RASTER
+// COORDINATED VIEW CHANGE
+// =========================================================
+//
+// Useful when Python/Dash explicitly changes both maps,
+// e.g. when clicking "Zoom to layer".
 // =========================================================
 
-window.gcpMapSync.fitHistoricalBounds =
-    function(bounds) {
+window.gcpMapSync.setSynchronizedView =
+    function(center, zoom) {
 
         const state =
             window.gcpMapSyncState;
@@ -176,35 +213,10 @@ window.gcpMapSync.fitHistoricalBounds =
             return;
         }
 
-        if (!bounds) {
-            return;
-        }
 
-
-        // -----------------------------------------------------
-        // TiTiler / RasterAsset bounds:
-        //
-        // [west, south, east, north]
-        // -----------------------------------------------------
-
-        const leafletBounds = [
-            [
-                bounds[1],
-                bounds[0]
-            ],
-            [
-                bounds[3],
-                bounds[2]
-            ]
-        ];
-
-
-        // -----------------------------------------------------
-        // Temporarily stop two-way synchronization.
-        // Otherwise the two maps can fight the fit operation.
-        // -----------------------------------------------------
-
-        state.fittingNewLayer = true;
+        // Stop normal synchronization while both maps
+        // are being moved together.
+        state.fittingLayer = true;
 
 
         const reference =
@@ -214,62 +226,43 @@ window.gcpMapSync.fitHistoricalBounds =
             state.historical;
 
 
-        // -----------------------------------------------------
-        // Make sure the map dimensions are current.
-        // -----------------------------------------------------
-
-        reference.invalidateSize({
-            pan: false
-        });
-
-        historical.invalidateSize({
-            pan: false
-        });
+        reference._gcpSyncLocked = true;
+        historical._gcpSyncLocked = true;
 
 
-        // -----------------------------------------------------
-        // Small delay allows Dash/Leaflet to finish inserting
-        // the newly uploaded layer.
-        // -----------------------------------------------------
-
-        setTimeout(
-            function() {
-
-                reference.fitBounds(
-                    leafletBounds,
-                    {
-                        padding: [25, 25],
-                        animate: false,
-                        maxZoom: 24
-                    }
-                );
-
-                historical.fitBounds(
-                    leafletBounds,
-                    {
-                        padding: [25, 25],
-                        animate: false,
-                        maxZoom: 24
-                    }
-                );
-
-            },
-            200
+        reference.setView(
+            center,
+            zoom,
+            {
+                animate: false
+            }
         );
 
 
-        // -----------------------------------------------------
-        // Re-enable normal synchronization after fitBounds()
-        // and its move/zoom events have finished.
-        // -----------------------------------------------------
+        historical.setView(
+            center,
+            zoom,
+            {
+                animate: false
+            }
+        );
 
+
+        // Release the locks after Leaflet has finished
+        // emitting its movement events.
         setTimeout(
             function() {
 
-                state.fittingNewLayer =
+                reference._gcpSyncLocked =
+                    false;
+
+                historical._gcpSyncLocked =
+                    false;
+
+                state.fittingLayer =
                     false;
 
             },
-            1000
+            300
         );
     };
