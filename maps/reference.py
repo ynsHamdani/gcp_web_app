@@ -9,7 +9,7 @@ REFERENCE_BASE_URL = (
 
 def create_reference_layers():
 
-    base_layer = dl.BaseLayer(
+    osm = dl.BaseLayer(
         dl.TileLayer(
             url=REFERENCE_BASE_URL,
             attribution="© OpenStreetMap contributors",
@@ -18,31 +18,47 @@ def create_reference_layers():
         checked=True,
     )
 
-    reference_layer = dl.Overlay(
-        dl.TileLayer(
-            id="reference-raster-layer",
-            url="",
-            opacity=0.0,
-            maxNativeZoom=22,
-        ),
-        name="Reference raster",
-        checked=True,
-    )
-
     return [
         dl.LayersControl(
+            id="reference-layer-control",
             children=[
-                base_layer,
-                reference_layer,
+                osm
             ],
             position="topright",
         ),
 
         dl.FullScreenControl(
-            position="bottomright",
+            position="bottomright"
         ),
 
         dl.ScaleControl(
-            position="bottomleft",
+            position="bottomleft"
         ),
     ]
+
+
+def create_reference_overlay(
+    asset,
+    filename,
+    opacity=1.0,
+):
+
+    return dl.Overlay(
+        dl.TileLayer(
+            id={
+                "type": "reference-raster-layer",
+                "index": asset.cog_path.stem,
+            },
+
+            url=asset.tile_url,
+
+            opacity=opacity,
+
+            tileSize=256,
+            maxZoom=24,
+            zIndex=10,
+        ),
+
+        name=filename,
+        checked=True,
+    )

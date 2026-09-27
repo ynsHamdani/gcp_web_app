@@ -18,11 +18,6 @@ from dash import (
 from dash_extensions.javascript import Namespace
 from flask import send_from_directory
 
-
-# =========================================================
-# CONFIG
-# =========================================================
-
 from config import (
     APP_BASE_URL,
     TITILER_URL,
@@ -32,11 +27,6 @@ from config import (
     HISTORICAL_COG_DIR,
 )
 
-
-# =========================================================
-# RASTER FUNCTIONS
-# =========================================================
-
 from maps.raster import (
     RasterAsset,
     save_uploaded_tiff,
@@ -45,23 +35,6 @@ from maps.raster import (
     get_titiler_asset,
     calculate_fit_zoom,
 )
-
-
-# =========================================================
-# MAP LAYERS
-# =========================================================
-
-from maps.reference import create_reference_layers
-
-from maps.historical import (
-    create_historical_layers,
-    create_historical_overlay,
-)
-
-
-# =========================================================
-# UI
-# =========================================================
 
 from ui.layout import create_layout
 
@@ -89,12 +62,7 @@ MAP_STYLE = {
     "height": "100%",
 }
 
-
-# =========================================================
-# HISTORICAL BASE MAP
-# =========================================================
-
-HISTORICAL_BASE_URL = (
+OSM_URL = (
     "https://{s}.tile.openstreetmap.org/"
     "{z}/{x}/{y}.png"
 )
@@ -111,12 +79,100 @@ ns = Namespace(
 
 
 # =========================================================
+# COMMON LAYER HELPERS
+# =========================================================
+
+def create_layers_control(control_id):
+    """Create a LayersControl with OSM as the base layer."""
+
+    osm = dl.BaseLayer(
+        dl.TileLayer(
+            url=OSM_URL,
+            attribution="© OpenStreetMap contributors",
+        ),
+        name="OpenStreetMap",
+        checked=True,
+    )
+
+    return [
+        dl.LayersControl(
+            id=control_id,
+            children=[osm],
+            position="topright",
+        ),
+        dl.FullScreenControl(
+            position="bottomright",
+        ),
+        dl.ScaleControl(
+            position="bottomleft",
+        ),
+    ]
+
+
+def create_raster_overlay(asset, filename, layer_type, opacity=1.0):
+    """Create one dynamic raster overlay."""
+
+    return dl.Overlay(
+        dl.TileLayer(
+            id={
+                "type": layer_type,
+                "index": asset.cog_path.stem,
+            },
+            url=asset.tile_url,
+            opacity=opacity,
+            tileSize=256,
+            maxZoom=24,
+            zIndex=10,
+        ),
+        name=filename,
+        checked=True,
+    )
+
+
+def build_layer_children(layer_registry, layer_type):
+    """Rebuild all raster layers plus the OSM base layer."""
+
+    children = [
+        dl.BaseLayer(
+            dl.TileLayer(
+                url=OSM_URL,
+                attribution="© OpenStreetMap contributors",
+            ),
+            name="OpenStreetMap",
+            checked=True,
+        )
+    ]
+
+    for item in layer_registry:
+
+        asset = RasterAsset(
+            name=item["name"],
+            original_path=Path(item["original_path"]),
+            cog_path=Path(item["cog_path"]),
+            tile_url=item["tile_url"],
+            bounds=item["bounds"],
+            minzoom=item["minzoom"],
+            maxzoom=item["maxzoom"],
+        )
+
+        children.append(
+            create_raster_overlay(
+                asset=asset,
+                filename=item["name"],
+                layer_type=layer_type,
+                opacity=item["opacity"],
+            )
+        )
+
+    return children
+
+
+# =========================================================
 # REFERENCE MAP
 # =========================================================
 
 reference_map = dl.Map(
     id="reference-map",
-
     center=INITIAL_CENTER,
     zoom=INITIAL_ZOOM,
 
@@ -128,7 +184,9 @@ reference_map = dl.Map(
         "zoomend": ns("syncReference"),
     },
 
-    children=create_reference_layers(),
+    children=create_layers_control(
+        "reference-layer-control"
+    ),
 
     style=MAP_STYLE,
 )
@@ -140,7 +198,6 @@ reference_map = dl.Map(
 
 historical_map = dl.Map(
     id="historical-map",
-
     center=INITIAL_CENTER,
     zoom=INITIAL_ZOOM,
 
@@ -152,21 +209,66 @@ historical_map = dl.Map(
         "zoomend": ns("syncHistorical"),
     },
 
-    children=create_historical_layers(),
+    children=create_layers_control(
+        "historical-layer-control"
+    ),
 
     style=MAP_STYLE,
 )
 
 
 # =========================================================
-# HISTORICAL LAYER ZOOM CONTROL
-# =========================================================
-#
-# Placed at the bottom-right so it does not cover the
-# historical upload button at the top of the panel.
+# REFERENCE ZOOM CONTROL
 # =========================================================
 
-zoom_control = html.Div(
+reference_zoom_control = html.Div(
+    [
+        html.Div(
+            "Zoom to reference layer",
+            style={
+                "fontWeight": "600",
+                "marginBottom": "6px",
+            },
+        ),
+
+        dcc.Dropdown(
+            id="reference-layer-zoom-select",
+            options=[],
+            value=None,
+            placeholder="Select a reference map...",
+            clearable=False,
+        ),
+
+        html.Button(
+            "Zoom to layer",
+            id="reference-layer-zoom-button",
+            n_clicks=0,
+            style={
+                "marginTop": "8px",
+                "width": "100%",
+                "cursor": "pointer",
+            },
+        ),
+    ],
+    style={
+        "position": "fixed",
+        "top": "80px",
+        "left": "20px",
+        "zIndex": "1000",
+        "width": "280px",
+        "backgroundColor": "white",
+        "padding": "12px",
+        "borderRadius": "8px",
+        "boxShadow": "0 2px 10px rgba(0,0,0,0.15)",
+    },
+)
+
+
+# =========================================================
+# HISTORICAL ZOOM CONTROL
+# =========================================================
+
+historical_zoom_control = html.Div(
     [
         html.Div(
             "Zoom to historical layer",
@@ -195,11 +297,10 @@ zoom_control = html.Div(
             },
         ),
     ],
-
     style={
         "position": "fixed",
         "top": "80px",
-        "left": "20px",
+        "left": "calc(50% + 20px)",
         "zIndex": "1000",
         "width": "280px",
         "backgroundColor": "white",
@@ -207,7 +308,7 @@ zoom_control = html.Div(
         "borderRadius": "8px",
         "boxShadow": "0 2px 10px rgba(0,0,0,0.15)",
     },
-    )
+)
 
 
 # =========================================================
@@ -221,67 +322,20 @@ app.layout = html.Div(
             historical_map=historical_map,
         ),
 
-        zoom_control,
+        reference_zoom_control,
+        historical_zoom_control,
 
-        # Stores metadata needed for explicit layer navigation.
+        dcc.Store(
+            id="reference-layer-registry",
+            data=[],
+        ),
+
         dcc.Store(
             id="historical-layer-registry",
             data=[],
         ),
     ]
 )
-
-
-# =========================================================
-# HELPERS
-# =========================================================
-
-def build_historical_layer_children(layer_registry):
-    """
-    Rebuild the complete LayersControl children.
-
-    This is intentional. Instead of patching a Leaflet
-    LayersControl repeatedly, we recreate its children from
-    the registry. This keeps the Leaflet layer/control state
-    consistent after multiple uploads.
-    """
-
-    children = [
-        dl.BaseLayer(
-            dl.TileLayer(
-                url=HISTORICAL_BASE_URL,
-                attribution="© OpenStreetMap contributors",
-            ),
-            name="OpenStreetMap",
-            checked=True,
-        )
-    ]
-
-    for item in layer_registry:
-
-        raster_asset = RasterAsset(
-            name=item["name"],
-            original_path=Path(
-                item.get("original_path", "")
-            ),
-            cog_path=Path(
-                item["cog_path"]
-            ),
-            tile_url=item["tile_url"],
-            bounds=item["bounds"],
-            minzoom=item["minzoom"],
-            maxzoom=item["maxzoom"],
-        )
-
-        children.append(
-            create_historical_overlay(
-                asset=raster_asset,
-                filename=item["name"],
-                opacity=item["opacity"],
-            )
-        )
-
-    return children
 
 
 # =========================================================
@@ -313,122 +367,235 @@ def serve_historical_raster(filename):
 
 
 # =========================================================
-# TIFF UPLOAD + LAYER NAVIGATION CALLBACK
+# REFERENCE TIFF UPLOAD
 # =========================================================
 
 @app.callback(
-    # -----------------------------------------------------
-    # Raster outputs
-    # -----------------------------------------------------
-
     Output(
-        "reference-raster-layer",
-        "url",
-    ),
-
-    Output(
-        "reference-raster-layer",
-        "maxNativeZoom",
-    ),
-
-    Output(
-        "historical-layer-control",
+        "reference-layer-control",
         "children",
     ),
-
-    # -----------------------------------------------------
-    # Map view
-    # -----------------------------------------------------
-
-    Output(
-        "reference-map",
-        "center",
-    ),
-
-    Output(
-        "reference-map",
-        "zoom",
-    ),
-
-    Output(
-        "historical-map",
-        "center",
-    ),
-
-    Output(
-        "historical-map",
-        "zoom",
-    ),
-
-    # -----------------------------------------------------
-    # Upload status
-    # -----------------------------------------------------
-
     Output(
         "reference-upload-status",
         "children",
     ),
+    Output(
+        "reference-layer-registry",
+        "data",
+    ),
+    Output(
+        "reference-layer-zoom-select",
+        "options",
+    ),
+    Output(
+        "reference-layer-zoom-select",
+        "value",
+    ),
 
+    Input(
+        "reference-upload",
+        "contents",
+    ),
+
+    State(
+        "reference-upload",
+        "filename",
+    ),
+
+    State(
+        "reference-layer-registry",
+        "data",
+    ),
+
+    State(
+        "reference-opacity",
+        "value",
+    ),
+
+    prevent_initial_call=True,
+)
+def handle_reference_upload(
+    contents,
+    filename,
+    layer_registry,
+    reference_opacity,
+):
+
+    if not contents:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+        )
+
+    layer_registry = layer_registry or []
+
+    original_path = None
+    cog_path = None
+
+    try:
+
+        original_path = save_uploaded_tiff(
+            contents,
+            filename,
+            REFERENCE_ORIGINAL_DIR,
+        )
+
+        validate_geotiff(
+            original_path
+        )
+
+        cog_path = (
+            REFERENCE_COG_DIR
+            / f"{original_path.stem}_cog.tif"
+        )
+
+        convert_to_cog(
+            original_path,
+            cog_path,
+        )
+
+        raster_url = (
+            f"{APP_BASE_URL}"
+            f"/raster/reference/"
+            f"{quote(cog_path.name)}"
+        )
+
+        (
+            tile_url,
+            bounds,
+            minzoom,
+            maxzoom,
+        ) = get_titiler_asset(
+            raster_url,
+            TITILER_URL,
+            cog_path,
+        )
+
+        asset = RasterAsset(
+            name=filename,
+            original_path=original_path,
+            cog_path=cog_path,
+            tile_url=tile_url,
+            bounds=bounds,
+            minzoom=minzoom,
+            maxzoom=maxzoom,
+        )
+
+        opacity = (
+            reference_opacity / 100.0
+            if reference_opacity is not None
+            else 1.0
+        )
+
+        layer_id = asset.cog_path.stem
+
+        layer_registry = [
+            item
+            for item in layer_registry
+            if item.get("id") != layer_id
+        ]
+
+        layer_registry.append(
+            {
+                "id": layer_id,
+                "name": filename,
+                "original_path": str(
+                    asset.original_path
+                ),
+                "cog_path": str(
+                    asset.cog_path
+                ),
+                "tile_url": asset.tile_url,
+                "bounds": asset.bounds,
+                "center": asset.center,
+                "zoom": calculate_fit_zoom(
+                    asset.bounds
+                ),
+                "minzoom": asset.minzoom,
+                "maxzoom": asset.maxzoom,
+                "opacity": opacity,
+            }
+        )
+
+        children = build_layer_children(
+            layer_registry,
+            "reference-raster-layer",
+        )
+
+        options = [
+            {
+                "label": item["name"],
+                "value": item["id"],
+            }
+            for item in layer_registry
+        ]
+
+        return (
+            children,
+            f"Loaded: {filename}",
+            layer_registry,
+            options,
+            layer_id,
+        )
+
+    except Exception as exc:
+
+        if original_path:
+            original_path.unlink(
+                missing_ok=True
+            )
+
+        if cog_path:
+            cog_path.unlink(
+                missing_ok=True
+            )
+
+        return (
+            no_update,
+            f"Upload failed: {exc}",
+            no_update,
+            no_update,
+            no_update,
+        )
+
+
+# =========================================================
+# HISTORICAL TIFF UPLOAD
+# =========================================================
+
+@app.callback(
+    Output(
+        "historical-layer-control",
+        "children",
+    ),
     Output(
         "historical-upload-status",
         "children",
     ),
-
-    # -----------------------------------------------------
-    # Historical layer registry + zoom selector
-    # -----------------------------------------------------
-
     Output(
         "historical-layer-registry",
         "data",
     ),
-
     Output(
         "historical-layer-zoom-select",
         "options",
     ),
-
     Output(
         "historical-layer-zoom-select",
         "value",
     ),
 
-    # =====================================================
-    # INPUTS
-    # =====================================================
-
-    Input(
-        "reference-upload",
-        "contents",
-    ),
-
     Input(
         "historical-upload",
         "contents",
     ),
 
-    Input(
-        "historical-layer-zoom-button",
-        "n_clicks",
-    ),
-
-    # =====================================================
-    # STATES
-    # =====================================================
-
-    State(
-        "reference-upload",
-        "filename",
-    ),
-
     State(
         "historical-upload",
         "filename",
-    ),
-
-    State(
-        "historical-layer-zoom-select",
-        "value",
     ),
 
     State(
@@ -443,397 +610,274 @@ def serve_historical_raster(filename):
 
     prevent_initial_call=True,
 )
-def handle_raster_upload(
-    reference_contents,
-    historical_contents,
-    zoom_button_clicks,
-    reference_filename,
-    historical_filename,
-    selected_layer_id,
+def handle_historical_upload(
+    contents,
+    filename,
     layer_registry,
     historical_opacity,
 ):
 
-    triggered = ctx.triggered_id
-
-    if layer_registry is None:
-        layer_registry = []
-
-
-    # =====================================================
-    # ZOOM TO SELECTED HISTORICAL LAYER
-    # =====================================================
-
-    if triggered == "historical-layer-zoom-button":
-
-        if not selected_layer_id:
-            return (
-                no_update,      # 1
-                no_update,      # 2
-                no_update,      # 3
-                no_update,      # 4
-                no_update,      # 5
-                no_update,      # 6
-                no_update,      # 7
-                no_update,      # 8
-                no_update,      # 9
-                no_update,      # 10
-                no_update,      # 11
-                no_update,      # 12
-            )
-
-        selected_layer = next(
-            (
-                item
-                for item in layer_registry
-                if item.get("id") == selected_layer_id
-            ),
-            None,
+    if not contents:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+            no_update,
         )
 
-        if selected_layer is None:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                "Selected historical layer was not found.",
-                no_update,
-                no_update,
-                no_update,
+    layer_registry = layer_registry or []
+
+    original_path = None
+    cog_path = None
+
+    try:
+
+        original_path = save_uploaded_tiff(
+            contents,
+            filename,
+            HISTORICAL_ORIGINAL_DIR,
+        )
+
+        validate_geotiff(
+            original_path
+        )
+
+        cog_path = (
+            HISTORICAL_COG_DIR
+            / f"{original_path.stem}_cog.tif"
+        )
+
+        convert_to_cog(
+            original_path,
+            cog_path,
+        )
+
+        raster_url = (
+            f"{APP_BASE_URL}"
+            f"/raster/historical/"
+            f"{quote(cog_path.name)}"
+        )
+
+        (
+            tile_url,
+            bounds,
+            minzoom,
+            maxzoom,
+        ) = get_titiler_asset(
+            raster_url,
+            TITILER_URL,
+            cog_path,
+        )
+
+        asset = RasterAsset(
+            name=filename,
+            original_path=original_path,
+            cog_path=cog_path,
+            tile_url=tile_url,
+            bounds=bounds,
+            minzoom=minzoom,
+            maxzoom=maxzoom,
+        )
+
+        opacity = (
+            historical_opacity / 100.0
+            if historical_opacity is not None
+            else 1.0
+        )
+
+        layer_id = asset.cog_path.stem
+
+        layer_registry = [
+            item
+            for item in layer_registry
+            if item.get("id") != layer_id
+        ]
+
+        layer_registry.append(
+            {
+                "id": layer_id,
+                "name": filename,
+                "original_path": str(
+                    asset.original_path
+                ),
+                "cog_path": str(
+                    asset.cog_path
+                ),
+                "tile_url": asset.tile_url,
+                "bounds": asset.bounds,
+                "center": asset.center,
+                "zoom": calculate_fit_zoom(
+                    asset.bounds
+                ),
+                "minzoom": asset.minzoom,
+                "maxzoom": asset.maxzoom,
+                "opacity": opacity,
+            }
+        )
+
+        children = build_layer_children(
+            layer_registry,
+            "historical-raster-layer",
+        )
+
+        options = [
+            {
+                "label": item["name"],
+                "value": item["id"],
+            }
+            for item in layer_registry
+        ]
+
+        return (
+            children,
+            f"Loaded: {filename}",
+            layer_registry,
+            options,
+            layer_id,
+        )
+
+    except Exception as exc:
+
+        if original_path:
+            original_path.unlink(
+                missing_ok=True
+            )
+
+        if cog_path:
+            cog_path.unlink(
+                missing_ok=True
             )
 
         return (
-            no_update,                         # 1
-            no_update,                         # 2
-            no_update,                         # 3
-
-            selected_layer["center"],          # 4
-            selected_layer["zoom"],            # 5
-
-            selected_layer["center"],          # 6
-            selected_layer["zoom"],            # 7
-
-            no_update,                         # 8
-            no_update,                         # 9
-
-            no_update,                         # 10
-            no_update,                         # 11
-            no_update,                         # 12
+            no_update,
+            f"Upload failed: {exc}",
+            no_update,
+            no_update,
+            no_update,
         )
 
 
-    # =====================================================
-    # REFERENCE TIFF
-    # =====================================================
+# =========================================================
+# ZOOM TO SELECTED LAYER
+# =========================================================
+#
+# One callback handles both maps' zoom buttons.
+# This avoids duplicate Dash outputs while keeping the two
+# maps linked: whichever layer is selected, both maps receive
+# the same center/zoom.
+# =========================================================
 
-    if triggered == "reference-upload":
+@app.callback(
+    Output(
+        "reference-map",
+        "center",
+    ),
+    Output(
+        "reference-map",
+        "zoom",
+    ),
+    Output(
+        "historical-map",
+        "center",
+    ),
+    Output(
+        "historical-map",
+        "zoom",
+    ),
 
-        original_path = None
-        cog_path = None
+    Input(
+        "reference-layer-zoom-button",
+        "n_clicks",
+    ),
+    Input(
+        "historical-layer-zoom-button",
+        "n_clicks",
+    ),
 
-        try:
+    State(
+        "reference-layer-zoom-select",
+        "value",
+    ),
+    State(
+        "historical-layer-zoom-select",
+        "value",
+    ),
 
-            original_path = save_uploaded_tiff(
-                reference_contents,
-                reference_filename,
-                REFERENCE_ORIGINAL_DIR,
-            )
+    State(
+        "reference-layer-registry",
+        "data",
+    ),
+    State(
+        "historical-layer-registry",
+        "data",
+    ),
 
-            validate_geotiff(
-                original_path
-            )
+    prevent_initial_call=True,
+)
+def zoom_to_selected_layer(
+    reference_clicks,
+    historical_clicks,
+    selected_reference_id,
+    selected_historical_id,
+    reference_registry,
+    historical_registry,
+):
 
-            cog_path = (
-                REFERENCE_COG_DIR
-                / f"{original_path.stem}_cog.tif"
-            )
+    triggered = ctx.triggered_id
 
-            convert_to_cog(
-                original_path,
-                cog_path,
-            )
+    if triggered == "reference-layer-zoom-button":
 
-            raster_url = (
-                f"{APP_BASE_URL}"
-                f"/raster/reference/"
-                f"{quote(cog_path.name)}"
-            )
+        registry = reference_registry or []
+        selected_id = selected_reference_id
 
-            (
-                tile_url,
-                bounds,
-                minzoom,
-                maxzoom,
-            ) = get_titiler_asset(
-                raster_url,
-                TITILER_URL,
-                cog_path,
-            )
+    elif triggered == "historical-layer-zoom-button":
 
-            asset = RasterAsset(
-                name=reference_filename,
-                original_path=original_path,
-                cog_path=cog_path,
-                tile_url=tile_url,
-                bounds=bounds,
-                minzoom=minzoom,
-                maxzoom=maxzoom,
-            )
+        registry = historical_registry or []
+        selected_id = selected_historical_id
 
-            zoom = calculate_fit_zoom(
-                asset.bounds
-            )
+    else:
 
-            return (
-                asset.tile_url,
-                asset.maxzoom,
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+        )
 
-                no_update,
+    if not selected_id:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+        )
 
-                asset.center,
-                zoom,
+    selected_layer = next(
+        (
+            item
+            for item in registry
+            if item.get("id") == selected_id
+        ),
+        None,
+    )
 
-                asset.center,
-                zoom,
+    if selected_layer is None:
+        return (
+            no_update,
+            no_update,
+            no_update,
+            no_update,
+        )
 
-                f"Loaded: {reference_filename}",
-                no_update,
-
-                no_update,
-                no_update,
-                no_update,
-            )
-
-        except Exception as exc:
-
-            if original_path:
-                original_path.unlink(
-                    missing_ok=True
-                )
-
-            if cog_path:
-                cog_path.unlink(
-                    missing_ok=True
-                )
-
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                f"Upload failed: {exc}",
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
-
-
-    # =====================================================
-    # HISTORICAL TIFF
-    # =====================================================
-
-    if triggered == "historical-upload":
-
-        original_path = None
-        cog_path = None
-
-        try:
-
-            original_path = save_uploaded_tiff(
-                historical_contents,
-                historical_filename,
-                HISTORICAL_ORIGINAL_DIR,
-            )
-
-            validate_geotiff(
-                original_path
-            )
-
-            cog_path = (
-                HISTORICAL_COG_DIR
-                / f"{original_path.stem}_cog.tif"
-            )
-
-            convert_to_cog(
-                original_path,
-                cog_path,
-            )
-
-            raster_url = (
-                f"{APP_BASE_URL}"
-                f"/raster/historical/"
-                f"{quote(cog_path.name)}"
-            )
-
-            (
-                tile_url,
-                bounds,
-                minzoom,
-                maxzoom,
-            ) = get_titiler_asset(
-                raster_url,
-                TITILER_URL,
-                cog_path,
-            )
-
-            asset = RasterAsset(
-                name=historical_filename,
-                original_path=original_path,
-                cog_path=cog_path,
-                tile_url=tile_url,
-                bounds=bounds,
-                minzoom=minzoom,
-                maxzoom=maxzoom,
-            )
-
-            # -------------------------------------------------
-            # Keep the current opacity.
-            # -------------------------------------------------
-
-            opacity = (
-                historical_opacity / 100.0
-                if historical_opacity is not None
-                else 1.0
-            )
-
-            # -------------------------------------------------
-            # Add new layer metadata to registry.
-            # -------------------------------------------------
-
-            layer_id = asset.cog_path.stem
-
-            # Avoid duplicate registry entries.
-            layer_registry = [
-                item
-                for item in layer_registry
-                if item.get("id") != layer_id
-            ]
-
-            layer_registry.append(
-                {
-                    "id": layer_id,
-                    "name": historical_filename,
-                    "cog_path": str(
-                        asset.cog_path
-                    ),
-                    "original_path": str(
-                        asset.original_path
-                    ),
-                    "tile_url": asset.tile_url,
-                    "bounds": asset.bounds,
-                    "center": asset.center,
-                    "zoom": calculate_fit_zoom(
-                        asset.bounds
-                    ),
-                    "minzoom": asset.minzoom,
-                    "maxzoom": asset.maxzoom,
-                    "opacity": opacity,
-                }
-            )
-
-            # -------------------------------------------------
-            # Rebuild ALL historical layers.
-            #
-            # This ensures the new raster is a real visible
-            # Leaflet overlay, not only a newly patched control
-            # entry.
-            # -------------------------------------------------
-
-            historical_children = (
-                build_historical_layer_children(
-                    layer_registry
-                )
-            )
-
-            layer_options = [
-                {
-                    "label": item["name"],
-                    "value": item["id"],
-                }
-                for item in layer_registry
-            ]
-
-            # -------------------------------------------------
-            # IMPORTANT:
-            #
-            # Upload does not change the current view.
-            # Use the explicit "Zoom to layer" button for that.
-            # -------------------------------------------------
-
-            return (
-                no_update,                         # 1
-                no_update,                         # 2
-
-                historical_children,                # 3
-
-                no_update,                         # 4
-                no_update,                         # 5
-
-                no_update,                         # 6
-                no_update,                         # 7
-
-                no_update,                         # 8
-                f"Loaded: {historical_filename}",  # 9
-
-                layer_registry,                    # 10
-                layer_options,                     # 11
-                layer_id,                           # 12
-            )
-
-        except Exception as exc:
-
-            if original_path:
-                original_path.unlink(
-                    missing_ok=True
-                )
-
-            if cog_path:
-                cog_path.unlink(
-                    missing_ok=True
-                )
-
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-                f"Upload failed: {exc}",
-                no_update,
-                no_update,
-                no_update,
-            )
-
-
-    # =====================================================
-    # FALLBACK
-    # =====================================================
+    center = selected_layer["center"]
+    zoom = selected_layer["zoom"]
 
     return (
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
-        no_update,
+        center,
+        zoom,
+        center,
+        zoom,
     )
 
 
@@ -843,7 +887,10 @@ def handle_raster_upload(
 
 @app.callback(
     Output(
-        "reference-raster-layer",
+        {
+            "type": "reference-raster-layer",
+            "index": ALL,
+        },
         "opacity",
     ),
 
@@ -852,11 +899,27 @@ def handle_raster_upload(
         "value",
     ),
 
+    State(
+        {
+            "type": "reference-raster-layer",
+            "index": ALL,
+        },
+        "id",
+    ),
+
     prevent_initial_call=True,
 )
-def update_reference_opacity(value):
+def update_reference_opacity(
+    value,
+    layer_ids,
+):
 
-    return value / 100.0
+    opacity = value / 100.0
+
+    return [
+        opacity
+        for _ in layer_ids
+    ]
 
 
 # =========================================================
