@@ -2,7 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
-data/uploads/
+data/
 *.tif
 *.tiff
 *.log

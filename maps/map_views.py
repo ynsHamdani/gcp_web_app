@@ -156,8 +156,9 @@ def create_reference_map():
             "moveend": ns("syncReference"),
             "zoomend": ns("syncReference"),
         },
-        children=create_layers_control(
-            "reference-layer-control"
+        children=(
+            create_layers_control("reference-layer-control")
+            + [dl.LayerGroup(id="reference-gcp-layer")]
         ),
         style=MAP_STYLE,
     )
@@ -177,8 +178,9 @@ def create_historical_map():
             "moveend": ns("syncHistorical"),
             "zoomend": ns("syncHistorical"),
         },
-        children=create_layers_control(
-            "historical-layer-control"
+        children=(
+            create_layers_control("historical-layer-control")
+            + [dl.LayerGroup(id="historical-gcp-layer")]
         ),
         style=MAP_STYLE,
     )

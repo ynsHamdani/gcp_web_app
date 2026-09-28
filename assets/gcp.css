@@ -1,0 +1,51 @@
+.gcp-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 50px;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    border-top: 1px solid #e5e7eb;
+    border-bottom: 1px solid #e5e7eb;
+    background: #ffffff;
+}
+
+.gcp-controls-title {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: #374151;
+}
+
+.gcp-button {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.gcp-button:disabled {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.gcp-status {
+    min-width: 0;
+    flex: 1 1 auto;
+    font-size: 12px;
+    color: #6b7280;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gcp-confirm-button {
+    font-weight: 600;
+}
+
+.gcp-cancel-button {
+    color: #4b5563;
+}

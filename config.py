@@ -58,9 +58,23 @@ HISTORICAL_COG_DIR = UPLOAD_DIR / "historical" / "cogs"
 TEMP_RASTER_DIR = DATA_DIR / "temp_rasters"
 TEMP_RASTER_STAGING_DIR = TEMP_RASTER_DIR / "staging"
 
+# =========================================================
+# GCP STORAGE
+# =========================================================
+
+# Authoritative coordinate reference system for registered GCPs.
+# Leaflet still uses WGS84 (EPSG:4326) for map interaction; only the stored
+# GCP coordinates use this projected CRS.
+GCP_CRS = "EPSG:25832"
+
+GCP_DATA_DIR = DATA_DIR / "gcps"
+GCP_JSON_PATH = GCP_DATA_DIR / "gcps.json"
+GCP_STUDENT_ID = os.getenv("GCP_STUDENT_ID", "")
+
+
 # Remove temporary raster entries after this period of inactivity.
 TEMP_RASTER_TTL_HOURS = float(
-    os.getenv("TEMP_RASTER_TTL_HOURS", "24")
+    os.getenv("TEMP_RASTER_TTL_HOURS", "1")
 )
 
 
@@ -90,5 +104,6 @@ for directory in (
     HISTORICAL_COG_DIR,
     TEMP_RASTER_DIR,
     TEMP_RASTER_STAGING_DIR,
+    GCP_DATA_DIR,
 ):
     directory.mkdir(parents=True, exist_ok=True)
