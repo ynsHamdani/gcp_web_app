@@ -1,4 +1,4 @@
-from __future__ import annotations
+from  __future__ import annotations
 
 """Persistence abstraction for GCP records.
 

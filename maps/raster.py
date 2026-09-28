@@ -28,6 +28,7 @@ from urllib.parse import quote
 
 import requests
 import rasterio
+from pyproj import Transformer
 from rasterio.warp import transform_bounds
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
@@ -304,6 +305,63 @@ def validate_geotiff(path: Path) -> None:
         raise ValueError(
             f"The uploaded file is not a valid readable GeoTIFF: {exc}"
         ) from exc
+
+
+# =========================================================
+# HISTORICAL RASTER: GEOGRAPHIC POSITION -> PIXEL/LINE
+# =========================================================
+
+
+def geographic_to_pixel_line(
+    cog_path: str | Path,
+    lon: float,
+    lat: float,
+) -> dict[str, float]:
+    """Convert WGS84 longitude/latitude to continuous raster pixel/line.
+
+    The historical raster's own CRS and affine transform are used.  Fractional
+    pixel/line values are preserved because GDAL GCPs support continuous
+    raster coordinates.  A ValueError is raised when the position is outside
+    the raster footprint.
+    """
+
+    cog_path = Path(cog_path)
+
+    if not cog_path.exists() or not cog_path.is_file():
+        raise ValueError(
+            "The selected historical raster is no longer available."
+        )
+
+    with rasterio.open(cog_path) as src:
+        if src.crs is None:
+            raise ValueError("The historical raster has no CRS.")
+
+        to_raster = Transformer.from_crs(
+            "EPSG:4326",
+            src.crs,
+            always_xy=True,
+        )
+        raster_x, raster_y = to_raster.transform(
+            float(lon),
+            float(lat),
+        )
+
+        # Invert the affine transform to obtain continuous (column, row)
+        # coordinates in the historical image.
+        pixel, line = (~src.transform) * (raster_x, raster_y)
+
+        if not (
+            0.0 <= float(pixel) < float(src.width)
+            and 0.0 <= float(line) < float(src.height)
+        ):
+            raise ValueError(
+                "The historical point is outside the uploaded historical raster."
+            )
+
+    return {
+        "pixel": float(pixel),
+        "line": float(line),
+    }
 
 
 # =========================================================

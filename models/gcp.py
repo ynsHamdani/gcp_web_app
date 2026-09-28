@@ -2,9 +2,10 @@ from __future__ import annotations
 
 """Domain logic for Ground Control Points.
 
-The application receives map clicks in WGS84 latitude/longitude because that
-is the coordinate system used by Leaflet.  GCP coordinates are converted to
-and stored in the project's authoritative projected CRS: EPSG:25832.
+Leaflet works with WGS84 latitude/longitude (EPSG:4326).  The authoritative
+reference coordinates used by the project are stored in EPSG:25832.  For the
+historical raster, the record also stores the raster-space position
+(pixel/line) needed later by GDAL/QGIS for georeferencing.
 
 This module contains data/geometry logic only.  It does not know about Dash,
 JSON, PostgreSQL, or the UI.
@@ -12,6 +13,7 @@ JSON, PostgreSQL, or the UI.
 
 from datetime import datetime, timezone
 from math import hypot
+from typing import Any
 
 from pyproj import Transformer
 
@@ -25,14 +27,34 @@ _WGS84_TO_GCP = Transformer.from_crs(
 )
 
 
-def normalize_position(position) -> dict[str, float]:
-    """Normalize a Leaflet [lat, lon] position."""
+# =========================================================
+# COORDINATE HELPERS
+# =========================================================
 
-    if not position or len(position) != 2:
+
+def normalize_position(position: Any) -> dict[str, float]:
+    """Normalize Leaflet coordinates to ``{"lat": ..., "lon": ...}``.
+
+    Accepted inputs:
+    - [lat, lon]
+    - {"lat": lat, "lng": lon}
+    - {"lat": lat, "lon": lon}
+    """
+
+    if isinstance(position, dict):
+        lat = position.get("lat")
+        lon = position.get("lon", position.get("lng"))
+    elif position is not None and len(position) == 2:
+        lat = position[0]
+        lon = position[1]
+    else:
         raise ValueError("A valid [latitude, longitude] position is required.")
 
-    lat = float(position[0])
-    lon = float(position[1])
+    if lat is None or lon is None:
+        raise ValueError("A valid latitude/longitude position is required.")
+
+    lat = float(lat)
+    lon = float(lon)
 
     if not (-90.0 <= lat <= 90.0):
         raise ValueError("Latitude must be between -90 and 90 degrees.")
@@ -42,8 +64,8 @@ def normalize_position(position) -> dict[str, float]:
     return {"lat": lat, "lon": lon}
 
 
-def leaflet_to_gcp_position(position) -> dict[str, float | str]:
-    """Convert a Leaflet WGS84 [lat, lon] position to EPSG:25832."""
+def leaflet_to_gcp_position(position: Any) -> dict[str, float | str]:
+    """Convert a Leaflet WGS84 position to EPSG:25832."""
 
     normalized = normalize_position(position)
 
@@ -63,7 +85,7 @@ def leaflet_to_gcp_position(position) -> dict[str, float | str]:
 
 
 def displacement_m(reference: dict, historical: dict) -> float:
-    """Return planar displacement in metres using stored EPSG:25832 X/Y."""
+    """Return the current historical/reference displacement in metres."""
 
     reference_x = float(reference["x"])
     reference_y = float(reference["y"])
@@ -84,50 +106,89 @@ def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# =========================================================
+# GCP RECORD
+# =========================================================
+
+
 def build_gcp_record(
     *,
-    reference_position,
-    historical_position,
-    student: str = "",
+    reference_position: Any,
+    historical_position: Any,
+    historical_pixel: float,
+    historical_line: float,
+    student_id: str = "",
     reference_layer_id: str | None = None,
     historical_layer_id: str | None = None,
 ) -> dict:
-    """Build a confirmed GCP record with authoritative EPSG:25832 X/Y."""
+    """Build a confirmed GCP record.
+
+    The authoritative georeferencing relationship is:
+
+        historical pixel/line -> reference X/Y (EPSG:25832)
+
+    The historical X/Y and lat/lon are retained as quality-control metadata
+    describing the historical raster's current georeferenced position.
+    """
 
     reference = leaflet_to_gcp_position(reference_position)
     historical = leaflet_to_gcp_position(historical_position)
 
     return {
         "crs": GCP_CRS,
-        "reference": reference,
-        "historical": historical,
-        "offset_m": round(displacement_m(reference, historical), 3),
-        "status": "confirmed",
-        "timestamp": utc_timestamp(),
-        "student": student,
         "reference_layer_id": reference_layer_id,
         "historical_layer_id": historical_layer_id,
+        "student_id": student_id,
+        "reference": {
+            "x": reference["x"],
+            "y": reference["y"],
+            "lon": reference["lon"],
+            "lat": reference["lat"],
+            "crs": GCP_CRS,
+        },
+        "historical": {
+            "pixel": float(historical_pixel),
+            "line": float(historical_line),
+            "x": historical["x"],
+            "y": historical["y"],
+            "lon": historical["lon"],
+            "lat": historical["lat"],
+            "crs": GCP_CRS,
+        },
+        # This is the displacement in the historical map's CURRENT
+        # georeferencing, before applying the new GCP transformation.
+        "offset_m": round(displacement_m(reference, historical), 3),
+        "status": "confirmed",
+        "created_at": utc_timestamp(),
+        "updated_at": utc_timestamp(),
     }
 
 
 def gcp_table_row(record: dict) -> dict:
-    """Convert one domain record into the existing AG Grid row shape.
+    """Convert one GCP record into the existing AG Grid row shape."""
 
-    The table now displays the authoritative projected coordinates (metres)
-    rather than latitude/longitude.
-    """
-
-    reference = record["reference"]
-    historical = record["historical"]
+    reference = record.get("reference", {})
+    historical = record.get("historical", {})
     offset_m = float(record.get("offset_m", 0.0))
+
+    student_id = record.get(
+        "student_id",
+        record.get("student", ""),
+    )
 
     return {
         "gcp_id": record.get("gcp_id", ""),
         "feature_type": "Point",
-        "reference": f"{float(reference['x']):.3f}, {float(reference['y']):.3f}",
-        "historical": f"{float(historical['x']):.3f}, {float(historical['y']):.3f}",
+        "reference": (
+            f"{float(reference.get('x', 0.0)):.3f}, "
+            f"{float(reference.get('y', 0.0)):.3f}"
+        ),
+        "historical": (
+            f"{float(historical.get('x', 0.0)):.3f}, "
+            f"{float(historical.get('y', 0.0)):.3f}"
+        ),
         "offset": f"{offset_m:.2f} m",
-        "student": record.get("student", ""),
+        "student": student_id,
         "status": record.get("status", "confirmed"),
         "crs": record.get("crs", GCP_CRS),
     }
