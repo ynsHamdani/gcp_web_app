@@ -1,12 +1,7 @@
 window.gcpMapSync = Object.assign({}, window.gcpMapSync, {
     handlers: {
 
-        // =================================================
-        // REGISTER REFERENCE MAP
-        // =================================================
-
         registerReference: function(e, ctx) {
-
             window.gcpMapSyncState =
                 window.gcpMapSyncState || {};
 
@@ -14,13 +9,7 @@ window.gcpMapSync = Object.assign({}, window.gcpMapSync, {
                 ctx.map;
         },
 
-
-        // =================================================
-        // REGISTER HISTORICAL MAP
-        // =================================================
-
         registerHistorical: function(e, ctx) {
-
             window.gcpMapSyncState =
                 window.gcpMapSyncState || {};
 
@@ -28,20 +17,10 @@ window.gcpMapSync = Object.assign({}, window.gcpMapSync, {
                 ctx.map;
         },
 
-
-        // =================================================
-        // REFERENCE -> HISTORICAL
-        // =================================================
-
         syncReference: function(e, ctx) {
+            const state = window.gcpMapSyncState;
 
-            const state =
-                window.gcpMapSyncState;
-
-            if (
-                !state ||
-                !state.historical
-            ) {
+            if (!state || !state.historical) {
                 return;
             }
 
@@ -51,20 +30,10 @@ window.gcpMapSync = Object.assign({}, window.gcpMapSync, {
             );
         },
 
-
-        // =================================================
-        // HISTORICAL -> REFERENCE
-        // =================================================
-
         syncHistorical: function(e, ctx) {
+            const state = window.gcpMapSyncState;
 
-            const state =
-                window.gcpMapSyncState;
-
-            if (
-                !state ||
-                !state.reference
-            ) {
+            if (!state || !state.reference) {
                 return;
             }
 
@@ -77,133 +46,73 @@ window.gcpMapSync = Object.assign({}, window.gcpMapSync, {
 });
 
 
-// =========================================================
-// SYNCHRONIZE MAPS
-// =========================================================
-//
-// Small debounce prevents the first programmatic zoom
-// ("Zoom to layer") from being immediately overwritten by
-// the other map's moveend/zoomend event.
-// =========================================================
+function syncMapViewDebounced(source, target) {
 
-function syncMapViewDebounced(
-    source,
-    target
-) {
+    const state = window.gcpMapSyncState;
 
-    const state =
-        window.gcpMapSyncState;
-
-    if (!state) {
+    if (!state || state.fittingLayer) {
         return;
     }
 
-    // Do not interfere with a coordinated map movement.
-    if (state.fittingLayer) {
-        return;
-    }
-
-
-    // Cancel any previous pending sync.
     if (source._gcpSyncTimer) {
-
-        clearTimeout(
-            source._gcpSyncTimer
-        );
+        clearTimeout(source._gcpSyncTimer);
     }
 
+    source._gcpSyncTimer = setTimeout(function() {
 
-    // Wait briefly for Leaflet to finish its current
-    // movement/zoom operation.
-    source._gcpSyncTimer =
-        setTimeout(
-            function() {
+        if (state.fittingLayer) {
+            return;
+        }
 
-                if (state.fittingLayer) {
-                    return;
-                }
+        const sourceCenter = source.getCenter();
+        const sourceZoom = source.getZoom();
 
+        const targetCenter = target.getCenter();
+        const targetZoom = target.getZoom();
 
-                const sourceCenter =
-                    source.getCenter();
+        const sameView =
+            sourceZoom === targetZoom &&
+            Math.abs(
+                sourceCenter.lat - targetCenter.lat
+            ) < 1e-10 &&
+            Math.abs(
+                sourceCenter.lng - targetCenter.lng
+            ) < 1e-10;
 
-                const sourceZoom =
-                    source.getZoom();
+        if (sameView) {
+            return;
+        }
 
-                const targetCenter =
-                    target.getCenter();
+        if (target._gcpSyncLocked) {
+            return;
+        }
 
-                const targetZoom =
-                    target.getZoom();
+        target._gcpSyncLocked = true;
 
-
-                const sameView =
-                    sourceZoom === targetZoom &&
-                    Math.abs(
-                        sourceCenter.lat -
-                        targetCenter.lat
-                    ) < 1e-10 &&
-                    Math.abs(
-                        sourceCenter.lng -
-                        targetCenter.lng
-                    ) < 1e-10;
-
-
-                if (sameView) {
-                    return;
-                }
-
-
-                // Prevent the resulting target events
-                // from immediately bouncing back.
-                if (target._gcpSyncLocked) {
-                    return;
-                }
-
-
-                target._gcpSyncLocked = true;
-
-
-                target.setView(
-                    sourceCenter,
-                    sourceZoom,
-                    {
-                        animate: false
-                    }
-                );
-
-
-                // Keep the lock long enough for Leaflet's
-                // moveend/zoomend events to finish.
-                setTimeout(
-                    function() {
-
-                        target._gcpSyncLocked =
-                            false;
-
-                    },
-                    250
-                );
-
-            },
-            100
+        target.setView(
+            sourceCenter,
+            sourceZoom,
+            {
+                animate: false
+            }
         );
+
+        setTimeout(function() {
+            target._gcpSyncLocked = false;
+        }, 250);
+
+    }, 100);
 }
 
 
-// =========================================================
-// COORDINATED VIEW CHANGE
-// =========================================================
-//
-// Useful when Python/Dash explicitly changes both maps,
-// e.g. when clicking "Zoom to layer".
-// =========================================================
-
+/*
+ * Optional helper for future coordinated programmatic
+ * view changes.
+ */
 window.gcpMapSync.setSynchronizedView =
     function(center, zoom) {
 
-        const state =
-            window.gcpMapSyncState;
+        const state = window.gcpMapSyncState;
 
         if (
             !state ||
@@ -213,24 +122,9 @@ window.gcpMapSync.setSynchronizedView =
             return;
         }
 
-
-        // Stop normal synchronization while both maps
-        // are being moved together.
         state.fittingLayer = true;
 
-
-        const reference =
-            state.reference;
-
-        const historical =
-            state.historical;
-
-
-        reference._gcpSyncLocked = true;
-        historical._gcpSyncLocked = true;
-
-
-        reference.setView(
+        state.reference.setView(
             center,
             zoom,
             {
@@ -238,8 +132,7 @@ window.gcpMapSync.setSynchronizedView =
             }
         );
 
-
-        historical.setView(
+        state.historical.setView(
             center,
             zoom,
             {
@@ -247,22 +140,7 @@ window.gcpMapSync.setSynchronizedView =
             }
         );
 
-
-        // Release the locks after Leaflet has finished
-        // emitting its movement events.
-        setTimeout(
-            function() {
-
-                reference._gcpSyncLocked =
-                    false;
-
-                historical._gcpSyncLocked =
-                    false;
-
-                state.fittingLayer =
-                    false;
-
-            },
-            300
-        );
+        setTimeout(function() {
+            state.fittingLayer = false;
+        }, 300);
     };

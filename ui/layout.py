@@ -96,6 +96,13 @@ def create_gcp_controls():
                 disabled=True,
                 className="gcp-button gcp-cancel-button",
             ),
+            html.Button(
+                "Delete GCP",
+                id="delete-gcp-button",
+                n_clicks=0,
+                disabled=True,
+                className="gcp-button gcp-delete-button",
+            ),
             html.Div(
                 id="gcp-status",
                 className="gcp-status",
@@ -125,6 +132,7 @@ def create_gcp_table(initial_rows=None):
             {"field": "offset", "headerName": "Offset"},
             {"field": "student", "headerName": "Student"},
             {"field": "status", "headerName": "Status"},
+            {"field": "recorded_at", "headerName": "Recorded"},
         ],
         defaultColDef={
             "sortable": True,

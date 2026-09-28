@@ -364,6 +364,42 @@ def geographic_to_pixel_line(
     }
 
 
+
+# =========================================================
+# LAYER METADATA
+# =========================================================
+
+
+def get_raster_metadata(path: Path) -> dict:
+    """Read persistent metadata from a raster/COG.
+
+    Extent is stored in the raster's own CRS as:
+    [xmin, ymin, xmax, ymax].
+    """
+
+    path = Path(path)
+
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"Raster file does not exist: {path}")
+
+    with rasterio.open(path) as src:
+        if src.crs is None:
+            raise ValueError("Raster has no CRS.")
+
+        return {
+            "crs": src.crs.to_string(),
+            "extent": [
+                float(src.bounds.left),
+                float(src.bounds.bottom),
+                float(src.bounds.right),
+                float(src.bounds.top),
+            ],
+            "width": int(src.width),
+            "height": int(src.height),
+        }
+
+
+
 # =========================================================
 # COG CONVERSION
 # =========================================================

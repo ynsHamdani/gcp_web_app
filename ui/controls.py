@@ -5,7 +5,7 @@ from dash import dcc, html
 
 ZOOM_CONTROL_STYLE = {
     "position": "fixed",
-    "top": "195px",
+    "top": "80px",
     "zIndex": "1000",
     "width": "280px",
     "backgroundColor": "white",

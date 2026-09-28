@@ -1,14 +1,9 @@
-from  __future__ import annotations
+from __future__ import annotations
 
 """Persistence abstraction for GCP records.
 
-The store deliberately does not perform coordinate conversion.  The domain
-model creates records containing authoritative X/Y coordinates and the CRS;
-this module simply persists those records.
-
-The callbacks depend on ``GCPStore`` only.  ``JSONGCPStore`` is the prototype
-backend.  A future ``PostgresGCPStore`` can implement the same methods without
-changing the Dash interaction workflow.
+JSON is the prototype backend. The callback layer depends only on GCPStore,
+so a future PostgreSQL implementation can provide the same contract.
 """
 
 from pathlib import Path
@@ -20,7 +15,7 @@ from typing import Protocol
 
 
 class GCPStore(Protocol):
-    """Small persistence contract used by the GCP callbacks."""
+    """Persistence contract used by the GCP callbacks."""
 
     def list(self) -> list[dict]: ...
 
@@ -34,14 +29,10 @@ class GCPStore(Protocol):
 
 
 class JSONGCPStore:
-    """File-backed implementation of the GCPStore contract.
+    """Atomic JSON-backed GCP store.
 
-    GCP records are stored exactly as produced by the domain model, including
-    reference/historical X/Y coordinates and the CRS identifier.
-
-    The file is rewritten atomically.  The in-process lock is sufficient for
-    the current single-process prototype; PostgreSQL should be used later when
-    multiple app workers write concurrently.
+    Legacy ``created_at``/``updated_at`` fields are normalized to the single
+    ``recorded_at`` field when records are read.
     """
 
     def __init__(self, path: str | Path):
@@ -54,33 +45,60 @@ class JSONGCPStore:
 
     def list(self) -> list[dict]:
         with self._lock:
-            return self._read()
+            records, changed = self._read_with_migration()
+            if changed:
+                self._atomic_write(records)
+            return records
 
     def get(self, gcp_id: str) -> dict | None:
         with self._lock:
+            records, changed = self._read_with_migration()
+            if changed:
+                self._atomic_write(records)
+
             return next(
-                (record for record in self._read() if record.get("gcp_id") == gcp_id),
+                (
+                    record
+                    for record in records
+                    if record.get("gcp_id") == gcp_id
+                ),
                 None,
             )
 
     def create(self, record: dict) -> dict:
         with self._lock:
-            records = self._read()
+            records, _ = self._read_with_migration()
+
             new_record = dict(record)
             new_record["gcp_id"] = self._next_id(records)
+
+            # Do not persist legacy timestamp fields if an older caller passes
+            # them accidentally.
+            new_record.pop("created_at", None)
+            new_record.pop("updated_at", None)
+            new_record.setdefault("recorded_at", None)
+
             records.append(new_record)
             self._atomic_write(records)
             return new_record
 
     def update(self, gcp_id: str, changes: dict) -> dict:
         with self._lock:
-            records = self._read()
+            records, _ = self._read_with_migration()
 
             for index, record in enumerate(records):
                 if record.get("gcp_id") != gcp_id:
                     continue
 
-                updated = {**record, **changes, "gcp_id": gcp_id}
+                updated = {
+                    **record,
+                    **changes,
+                    "gcp_id": gcp_id,
+                }
+                updated.pop("created_at", None)
+                updated.pop("updated_at", None)
+                updated.setdefault("recorded_at", record.get("recorded_at"))
+
                 records[index] = updated
                 self._atomic_write(records)
                 return updated
@@ -89,7 +107,8 @@ class JSONGCPStore:
 
     def delete(self, gcp_id: str) -> None:
         with self._lock:
-            records = self._read()
+            records, _ = self._read_with_migration()
+
             filtered = [
                 record
                 for record in records
@@ -101,17 +120,49 @@ class JSONGCPStore:
 
             self._atomic_write(filtered)
 
-    def _read(self) -> list[dict]:
+    def _read_with_migration(self) -> tuple[list[dict], bool]:
         try:
             with self.path.open("r", encoding="utf-8") as file:
                 data = json.load(file)
         except FileNotFoundError:
-            return []
+            return [], False
 
         if not isinstance(data, list):
             raise ValueError(f"Invalid GCP JSON store: {self.path}")
 
-        return data
+        normalized = []
+        changed = False
+
+        for record in data:
+            migrated = dict(record)
+
+            if "recorded_at" not in migrated:
+                legacy_timestamp = (
+                    migrated.get("updated_at")
+                    or migrated.get("created_at")
+                )
+                if legacy_timestamp is not None:
+                    migrated["recorded_at"] = legacy_timestamp
+                changed = True
+
+            if "created_at" in migrated:
+                migrated.pop("created_at", None)
+                changed = True
+
+            if "updated_at" in migrated:
+                migrated.pop("updated_at", None)
+                changed = True
+
+            if (
+                "student_id" not in migrated
+                and "student" in migrated
+            ):
+                migrated["student_id"] = migrated.pop("student")
+                changed = True
+
+            normalized.append(migrated)
+
+        return normalized, changed
 
     def _atomic_write(self, records: list[dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,6 +181,7 @@ class JSONGCPStore:
                 os.fsync(file.fileno())
 
             os.replace(tmp_name, self.path)
+
         finally:
             try:
                 os.unlink(tmp_name)

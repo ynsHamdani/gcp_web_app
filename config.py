@@ -2,11 +2,10 @@ from __future__ import annotations
 
 """Central application configuration.
 
-Paths intentionally remain compatible with the existing project structure.
-Student uploads are now stored only in a temporary content-addressed cache.
-Reference/historical "original" and "COG" directories are retained as
-configuration names for backward compatibility, but the new upload callbacks
-do not use them for student uploads.
+Student uploads are stored in a temporary, content-addressed raster cache.
+Layer metadata and GCP records are stored separately in JSON files so the
+persistence layer can later be replaced by PostgreSQL without changing the
+Dash interaction logic.
 """
 
 import os
@@ -25,8 +24,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 # =========================================================
 # EXISTING UPLOAD PATHS
 # =========================================================
-# Kept for compatibility with the rest of the project.  New student uploads
-# should NOT be written here.
+# Kept for compatibility. New student uploads use TEMP_RASTER_DIR.
 # =========================================================
 
 REFERENCE_ORIGINAL_DIR = UPLOAD_DIR / "reference" / "original"
@@ -39,43 +37,31 @@ HISTORICAL_COG_DIR = UPLOAD_DIR / "historical" / "cogs"
 # =========================================================
 # TEMPORARY STUDENT-RASTER STORAGE
 # =========================================================
-#
-# Layout:
-#
-# data/
-#   temp_rasters/
-#       staging/                <- raw upload, very short-lived
-#       reference/
-#           <sha256>/
-#               <sha256>.tif   <- one temporary COG
-#       historical/
-#           <sha256>/
-#               <sha256>.tif
-#
-# The SHA-256 directory means identical uploads share the same COG.
-# =========================================================
 
 TEMP_RASTER_DIR = DATA_DIR / "temp_rasters"
 TEMP_RASTER_STAGING_DIR = TEMP_RASTER_DIR / "staging"
 
+TEMP_RASTER_TTL_HOURS = float(
+    os.getenv("TEMP_RASTER_TTL_HOURS", "24")
+)
+
+
 # =========================================================
-# GCP STORAGE
+# GCP + LAYER METADATA STORAGE
 # =========================================================
 
-# Authoritative coordinate reference system for registered GCPs.
-# Leaflet still uses WGS84 (EPSG:4326) for map interaction; only the stored
-# GCP coordinates use this projected CRS.
+# Leaflet interaction remains WGS84 (EPSG:4326), while authoritative GCP
+# ground coordinates are stored in this projected CRS.
 GCP_CRS = "EPSG:25832"
 
 GCP_DATA_DIR = DATA_DIR / "gcps"
 GCP_JSON_PATH = GCP_DATA_DIR / "gcps.json"
+
+LAYER_DATA_DIR = DATA_DIR / "layers"
+REFERENCE_LAYER_JSON_PATH = LAYER_DATA_DIR / "reference_layers.json"
+HISTORICAL_LAYER_JSON_PATH = LAYER_DATA_DIR / "historical_layers.json"
+
 GCP_STUDENT_ID = os.getenv("GCP_STUDENT_ID", "")
-
-
-# Remove temporary raster entries after this period of inactivity.
-TEMP_RASTER_TTL_HOURS = float(
-    os.getenv("TEMP_RASTER_TTL_HOURS", "1")
-)
 
 
 # =========================================================
@@ -105,5 +91,6 @@ for directory in (
     TEMP_RASTER_DIR,
     TEMP_RASTER_STAGING_DIR,
     GCP_DATA_DIR,
+    LAYER_DATA_DIR,
 ):
     directory.mkdir(parents=True, exist_ok=True)

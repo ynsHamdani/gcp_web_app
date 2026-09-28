@@ -9,13 +9,18 @@ from callbacks.raster import (
     register_raster_callbacks,
     register_raster_routes,
 )
-from config import GCP_JSON_PATH
+from config import (
+    GCP_JSON_PATH,
+    HISTORICAL_LAYER_JSON_PATH,
+    REFERENCE_LAYER_JSON_PATH,
+)
 from maps.map_views import (
     create_historical_map,
     create_reference_map,
 )
 from models.gcp import gcp_table_row
 from storage.gcp_store import JSONGCPStore
+from storage.layer_store import JSONLayerStore
 from ui.controls import create_app_layout
 
 
@@ -31,15 +36,19 @@ app = Dash(
 
 
 # =========================================================
-# STORAGE BACKEND
-# =========================================================
-#
-# Dash callbacks depend on the GCPStore interface, not this JSON class.
-# When PostgreSQL is introduced, this is the only application wiring that
-# needs to change.
+# STORAGE BACKENDS
 # =========================================================
 
 gcp_store = JSONGCPStore(GCP_JSON_PATH)
+
+reference_layer_store = JSONLayerStore(
+    REFERENCE_LAYER_JSON_PATH
+)
+
+historical_layer_store = JSONLayerStore(
+    HISTORICAL_LAYER_JSON_PATH
+)
+
 initial_gcp_records = gcp_store.list()
 initial_gcp_rows = [
     gcp_table_row(record)
@@ -67,7 +76,13 @@ app.layout = create_app_layout(
 # =========================================================
 
 register_raster_routes(app)
-register_raster_callbacks(app)
+
+register_raster_callbacks(
+    app,
+    reference_layer_store=reference_layer_store,
+    historical_layer_store=historical_layer_store,
+)
+
 register_navigation_callbacks(app)
 register_opacity_callbacks(app)
 register_gcp_callbacks(app, gcp_store)

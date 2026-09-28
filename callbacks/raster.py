@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-"""Dash callbacks and Flask routes for temporary raster uploads."""
+"""Dash callbacks and Flask routes for temporary raster uploads.
+
+The browser keeps an active layer registry for the current page. In parallel,
+this module persists durable layer metadata to a JSON LayerStore. The latter
+contains filename, SHA-256, CRS, extent, width and height and is independent
+of the temporary COG cache.
+"""
 
 from dash import Input, Output, State, no_update
 from flask import send_file
@@ -11,13 +17,15 @@ from config import (
     APP_BASE_URL,
     TITILER_URL,
 )
-
 from maps.map_views import build_layer_children
 from maps.raster import (
     calculate_fit_zoom,
     cleanup_expired_temp_rasters,
+    get_raster_metadata,
     prepare_uploaded_raster,
 )
+from models.layer import build_layer_record
+from storage.layer_store import LayerStore
 
 
 # =========================================================
@@ -38,7 +46,6 @@ def register_raster_routes(app):
         )
 
         try:
-            # Accessing a raster keeps its cache entry alive.
             touch_cached_raster_from_relative_path(relative_path)
             path = get_temp_raster_path(relative_path)
         except (ValueError, FileNotFoundError):
@@ -56,7 +63,7 @@ def register_raster_routes(app):
 
 
 def _layer_options(layer_registry):
-    """Convert registry entries into Dash Dropdown options."""
+    """Convert active browser registry entries into dropdown options."""
 
     return [
         {
@@ -68,7 +75,7 @@ def _layer_options(layer_registry):
 
 
 def _update_registry(layer_registry, new_entry):
-    """Replace an entry with the same ID, otherwise append it."""
+    """Replace an active entry with the same ID, otherwise append it."""
 
     registry = [
         item
@@ -80,8 +87,13 @@ def _update_registry(layer_registry, new_entry):
     return registry
 
 
-def _raster_entry(asset, filename, opacity_percent):
-    """Create the JSON-safe layer registry entry for one temporary COG."""
+def _raster_entry(
+    asset,
+    filename,
+    opacity_percent,
+    metadata,
+):
+    """Create the active browser layer entry."""
 
     opacity = (
         float(opacity_percent) / 100.0
@@ -93,6 +105,7 @@ def _raster_entry(asset, filename, opacity_percent):
     layer_id = asset.cog_path.stem
 
     return {
+        # Existing browser-registry keys.
         "id": layer_id,
         "name": filename,
         "original_path": "",
@@ -104,7 +117,35 @@ def _raster_entry(asset, filename, opacity_percent):
         "minzoom": asset.minzoom,
         "maxzoom": asset.maxzoom,
         "opacity": opacity,
+
+        # Persistent layer metadata.
+        "layer_id": layer_id,
+        "filename": filename,
+        "sha256": layer_id,
+        "crs": metadata["crs"],
+        "extent": metadata["extent"],
+        "width": metadata["width"],
+        "height": metadata["height"],
     }
+
+
+def _persist_layer(layer_store: LayerStore, asset, filename: str):
+    """Persist layer metadata while keeping the raster itself temporary."""
+
+    metadata = get_raster_metadata(asset.cog_path)
+    layer_id = asset.cog_path.stem
+
+    record = build_layer_record(
+        layer_id=layer_id,
+        filename=filename,
+        sha256=layer_id,
+        crs=metadata["crs"],
+        extent=metadata["extent"],
+        width=metadata["width"],
+        height=metadata["height"],
+    )
+
+    return layer_store.upsert(record), metadata
 
 
 # =========================================================
@@ -112,11 +153,13 @@ def _raster_entry(asset, filename, opacity_percent):
 # =========================================================
 
 
-def register_raster_callbacks(app):
+def register_raster_callbacks(
+    app,
+    reference_layer_store: LayerStore,
+    historical_layer_store: LayerStore,
+):
     """Register reference and historical upload callbacks."""
 
-    # Opportunistic cleanup when the application starts registering callbacks.
-    # The actual TTL enforcement also happens when uploads/routes are used.
     cleanup_expired_temp_rasters(TEMP_RASTER_TTL_HOURS)
 
     # -----------------------------------------------------
@@ -124,42 +167,15 @@ def register_raster_callbacks(app):
     # -----------------------------------------------------
 
     @app.callback(
-        Output(
-            "reference-layer-control",
-            "children",
-        ),
-        Output(
-            "reference-upload-status",
-            "children",
-        ),
-        Output(
-            "reference-layer-registry",
-            "data",
-        ),
-        Output(
-            "reference-layer-zoom-select",
-            "options",
-        ),
-        Output(
-            "reference-layer-zoom-select",
-            "value",
-        ),
-        Input(
-            "reference-upload",
-            "contents",
-        ),
-        State(
-            "reference-upload",
-            "filename",
-        ),
-        State(
-            "reference-layer-registry",
-            "data",
-        ),
-        State(
-            "reference-opacity",
-            "value",
-        ),
+        Output("reference-layer-control", "children"),
+        Output("reference-upload-status", "children"),
+        Output("reference-layer-registry", "data"),
+        Output("reference-layer-zoom-select", "options"),
+        Output("reference-layer-zoom-select", "value"),
+        Input("reference-upload", "contents"),
+        State("reference-upload", "filename"),
+        State("reference-layer-registry", "data"),
+        State("reference-opacity", "value"),
         prevent_initial_call=True,
     )
     def handle_reference_upload(
@@ -184,11 +200,22 @@ def register_raster_callbacks(app):
                 raster_kind="reference",
             )
 
+            persistent_record, metadata = _persist_layer(
+                reference_layer_store,
+                asset,
+                filename,
+            )
+
             entry = _raster_entry(
                 asset,
                 filename,
                 reference_opacity,
+                metadata,
             )
+
+            # Keep the browser registry shape compatible with existing
+            # navigation/GCP callbacks.
+            entry["id"] = persistent_record["layer_id"]
 
             registry = _update_registry(
                 layer_registry,
@@ -224,42 +251,15 @@ def register_raster_callbacks(app):
     # -----------------------------------------------------
 
     @app.callback(
-        Output(
-            "historical-layer-control",
-            "children",
-        ),
-        Output(
-            "historical-upload-status",
-            "children",
-        ),
-        Output(
-            "historical-layer-registry",
-            "data",
-        ),
-        Output(
-            "historical-layer-zoom-select",
-            "options",
-        ),
-        Output(
-            "historical-layer-zoom-select",
-            "value",
-        ),
-        Input(
-            "historical-upload",
-            "contents",
-        ),
-        State(
-            "historical-upload",
-            "filename",
-        ),
-        State(
-            "historical-layer-registry",
-            "data",
-        ),
-        State(
-            "historical-opacity",
-            "value",
-        ),
+        Output("historical-layer-control", "children"),
+        Output("historical-upload-status", "children"),
+        Output("historical-layer-registry", "data"),
+        Output("historical-layer-zoom-select", "options"),
+        Output("historical-layer-zoom-select", "value"),
+        Input("historical-upload", "contents"),
+        State("historical-upload", "filename"),
+        State("historical-layer-registry", "data"),
+        State("historical-opacity", "value"),
         prevent_initial_call=True,
     )
     def handle_historical_upload(
@@ -284,11 +284,20 @@ def register_raster_callbacks(app):
                 raster_kind="historical",
             )
 
+            persistent_record, metadata = _persist_layer(
+                historical_layer_store,
+                asset,
+                filename,
+            )
+
             entry = _raster_entry(
                 asset,
                 filename,
                 historical_opacity,
+                metadata,
             )
+
+            entry["id"] = persistent_record["layer_id"]
 
             registry = _update_registry(
                 layer_registry,

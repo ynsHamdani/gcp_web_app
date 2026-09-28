@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-"""Domain logic for Ground Control Points.
+"""Domain model for Ground Control Points.
 
-Leaflet works with WGS84 latitude/longitude (EPSG:4326).  The authoritative
-reference coordinates used by the project are stored in EPSG:25832.  For the
-historical raster, the record also stores the raster-space position
-(pixel/line) needed later by GDAL/QGIS for georeferencing.
-
-This module contains data/geometry logic only.  It does not know about Dash,
-JSON, PostgreSQL, or the UI.
+Leaflet positions are handled as WGS84 latitude/longitude. The authoritative
+ground coordinates stored for the GCP use EPSG:25832. Historical raster
+pixel/line coordinates are the source coordinates required by GDAL-style
+georeferencing.
 """
 
 from datetime import datetime, timezone
 from math import hypot
-from typing import Any
 
 from pyproj import Transformer
 
@@ -27,31 +23,19 @@ _WGS84_TO_GCP = Transformer.from_crs(
 )
 
 
-# =========================================================
-# COORDINATE HELPERS
-# =========================================================
-
-
-def normalize_position(position: Any) -> dict[str, float]:
-    """Normalize Leaflet coordinates to ``{"lat": ..., "lon": ...}``.
-
-    Accepted inputs:
-    - [lat, lon]
-    - {"lat": lat, "lng": lon}
-    - {"lat": lat, "lon": lon}
-    """
+def normalize_position(position) -> dict[str, float]:
+    """Normalize Leaflet coordinates to {'lat': ..., 'lon': ...}."""
 
     if isinstance(position, dict):
         lat = position.get("lat")
         lon = position.get("lon", position.get("lng"))
-    elif position is not None and len(position) == 2:
+        if lat is None or lon is None:
+            raise ValueError("A valid latitude/longitude position is required.")
+    else:
+        if not position or len(position) != 2:
+            raise ValueError("A valid [latitude, longitude] position is required.")
         lat = position[0]
         lon = position[1]
-    else:
-        raise ValueError("A valid [latitude, longitude] position is required.")
-
-    if lat is None or lon is None:
-        raise ValueError("A valid latitude/longitude position is required.")
 
     lat = float(lat)
     lon = float(lon)
@@ -64,12 +48,11 @@ def normalize_position(position: Any) -> dict[str, float]:
     return {"lat": lat, "lon": lon}
 
 
-def leaflet_to_gcp_position(position: Any) -> dict[str, float | str]:
+def leaflet_to_gcp_position(position) -> dict[str, float | str]:
     """Convert a Leaflet WGS84 position to EPSG:25832."""
 
     normalized = normalize_position(position)
 
-    # always_xy=True means x=longitude and y=latitude for EPSG:4326.
     x, y = _WGS84_TO_GCP.transform(
         normalized["lon"],
         normalized["lat"],
@@ -85,56 +68,39 @@ def leaflet_to_gcp_position(position: Any) -> dict[str, float | str]:
 
 
 def displacement_m(reference: dict, historical: dict) -> float:
-    """Return the current historical/reference displacement in metres."""
-
-    reference_x = float(reference["x"])
-    reference_y = float(reference["y"])
-    historical_x = float(historical["x"])
-    historical_y = float(historical["y"])
+    """Return planar displacement in metres."""
 
     return float(
         hypot(
-            historical_x - reference_x,
-            historical_y - reference_y,
+            float(historical["x"]) - float(reference["x"]),
+            float(historical["y"]) - float(reference["y"]),
         )
     )
 
 
 def utc_timestamp() -> str:
-    """Return a timezone-aware UTC timestamp suitable for JSON/SQL."""
+    """Return a timezone-aware UTC timestamp."""
 
     return datetime.now(timezone.utc).isoformat()
 
 
-# =========================================================
-# GCP RECORD
-# =========================================================
-
-
 def build_gcp_record(
     *,
-    reference_position: Any,
-    historical_position: Any,
+    reference_position,
+    historical_position,
     historical_pixel: float,
     historical_line: float,
     student_id: str = "",
     reference_layer_id: str | None = None,
     historical_layer_id: str | None = None,
 ) -> dict:
-    """Build a confirmed GCP record.
-
-    The authoritative georeferencing relationship is:
-
-        historical pixel/line -> reference X/Y (EPSG:25832)
-
-    The historical X/Y and lat/lon are retained as quality-control metadata
-    describing the historical raster's current georeferenced position.
-    """
+    """Build the final persisted GCP record."""
 
     reference = leaflet_to_gcp_position(reference_position)
     historical = leaflet_to_gcp_position(historical_position)
 
     return {
+        "gcp_id": None,
         "crs": GCP_CRS,
         "reference_layer_id": reference_layer_id,
         "historical_layer_id": historical_layer_id,
@@ -155,17 +121,14 @@ def build_gcp_record(
             "lat": historical["lat"],
             "crs": GCP_CRS,
         },
-        # This is the displacement in the historical map's CURRENT
-        # georeferencing, before applying the new GCP transformation.
         "offset_m": round(displacement_m(reference, historical), 3),
         "status": "confirmed",
-        "created_at": utc_timestamp(),
-        "updated_at": utc_timestamp(),
+        "recorded_at": utc_timestamp(),
     }
 
 
 def gcp_table_row(record: dict) -> dict:
-    """Convert one GCP record into the existing AG Grid row shape."""
+    """Convert one GCP record into the AG Grid row shape."""
 
     reference = record.get("reference", {})
     historical = record.get("historical", {})
@@ -190,5 +153,5 @@ def gcp_table_row(record: dict) -> dict:
         "offset": f"{offset_m:.2f} m",
         "student": student_id,
         "status": record.get("status", "confirmed"),
-        "crs": record.get("crs", GCP_CRS),
+        "recorded_at": record.get("recorded_at", ""),
     }
