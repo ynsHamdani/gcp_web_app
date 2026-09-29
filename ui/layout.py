@@ -18,7 +18,7 @@ def create_map_panel(
     map_component,
     status_id: str,
 ):
-    """Create one complete map panel without any cross-module dependency."""
+    """Create one complete map panel."""
 
     return html.Div(
         className="map-panel",
@@ -28,13 +28,22 @@ def create_map_panel(
                 children=[
                     html.Div(
                         children=[
-                            html.Div(title, className="map-panel-title"),
-                            html.Div(subtitle, className="map-panel-subtitle"),
+                            html.Div(
+                                title,
+                                className="map-panel-title",
+                            ),
+                            html.Div(
+                                subtitle,
+                                className="map-panel-subtitle",
+                            ),
                         ],
                     ),
                     dcc.Upload(
                         id=upload_id,
-                        children=html.Button(upload_label, className="upload-button"),
+                        children=html.Button(
+                            upload_label,
+                            className="upload-button",
+                        ),
                         multiple=False,
                         accept=".tif,.tiff",
                     ),
@@ -42,12 +51,21 @@ def create_map_panel(
             ),
             html.Div(
                 className="map-panel-status",
-                children=[html.Div(id=status_id, className="upload-status")],
+                children=[
+                    html.Div(
+                        id=status_id,
+                        className="upload-status",
+                    ),
+                ],
             ),
             html.Div(
                 className="map-panel-opacity",
                 children=[
-                    html.Label("Opacity", htmlFor=opacity_id, className="opacity-label"),
+                    html.Label(
+                        "Opacity",
+                        htmlFor=opacity_id,
+                        className="opacity-label",
+                    ),
                     dcc.Slider(
                         id=opacity_id,
                         min=0,
@@ -55,11 +73,17 @@ def create_map_panel(
                         step=1,
                         value=100,
                         marks={0: "0", 50: "50", 100: "100"},
-                        tooltip={"placement": "bottom", "always_visible": False},
+                        tooltip={
+                            "placement": "bottom",
+                            "always_visible": False,
+                        },
                     ),
                 ],
             ),
-            html.Div(className="map-container", children=map_component),
+            html.Div(
+                className="map-container",
+                children=map_component,
+            ),
         ],
     )
 
@@ -70,45 +94,75 @@ def create_map_panel(
 
 
 def create_gcp_controls():
-    """Create the controls for the GCP collection workflow."""
+    """Create controls for GCP collection and deletion."""
+
+    button_style = {
+        "padding": "7px 12px",
+        "borderRadius": "5px",
+        "border": "1px solid #d1d5db",
+        "background": "#ffffff",
+        "cursor": "pointer",
+        "fontSize": "12px",
+    }
 
     return html.Div(
-        className="gcp-controls",
+        className="bottom-controls",
         children=[
-            html.Div("GCP COLLECTION", className="gcp-controls-title"),
-            html.Button(
-                "Add GCP",
-                id="add-gcp-button",
-                n_clicks=0,
-                className="gcp-button gcp-add-button",
-            ),
-            html.Button(
-                "Confirm GCP",
-                id="confirm-gcp-button",
-                n_clicks=0,
-                disabled=True,
-                className="gcp-button gcp-confirm-button",
-            ),
-            html.Button(
-                "Cancel",
-                id="cancel-gcp-button",
-                n_clicks=0,
-                disabled=True,
-                className="gcp-button gcp-cancel-button",
-            ),
-            html.Button(
-                "Delete GCP",
-                id="delete-gcp-button",
-                n_clicks=0,
-                disabled=True,
-                className="gcp-button gcp-delete-button",
+            html.Div(
+                children=[
+                    html.Div(
+                        "GCP COLLECTION",
+                        className="gcp-title",
+                    ),
+                    html.Div(
+                        id="gcp-status",
+                        className="gcp-status",
+                        children=(
+                            "GCP collection inactive — "
+                            "click Add GCP to start."
+                        ),
+                    ),
+                ],
             ),
             html.Div(
-                id="gcp-status",
-                className="gcp-status",
-                children="GCP collection inactive — click Add GCP to start.",
+                className="gcp-buttons",
+                children=[
+                    html.Button(
+                        "Add GCP",
+                        id="add-gcp-button",
+                        n_clicks=0,
+                        className="primary-button",
+                        style=button_style,
+                    ),
+                    html.Button(
+                        "Confirm GCP",
+                        id="confirm-gcp-button",
+                        n_clicks=0,
+                        disabled=True,
+                        className="primary-button",
+                        style=button_style,
+                    ),
+                    html.Button(
+                        "Cancel",
+                        id="cancel-gcp-button",
+                        n_clicks=0,
+                        disabled=True,
+                        className="secondary-button",
+                        style=button_style,
+                    ),
+                    html.Button(
+                        "Delete GCP",
+                        id="delete-gcp-button",
+                        n_clicks=0,
+                        disabled=True,
+                        className="secondary-button",
+                        style={
+                            **button_style,
+                            "color": "#b91c1c",
+                        },
+                    ),
+                ],
             ),
-            dcc.Store(id="gcp-collection-active", data=False),
         ],
     )
 
@@ -119,7 +173,7 @@ def create_gcp_controls():
 
 
 def create_gcp_table(initial_rows=None):
-    """Create the confirmed-GCP table."""
+    """Create the confirmed-GCP table with single-row selection."""
 
     return dag.AgGrid(
         id="gcp-table",
@@ -132,7 +186,6 @@ def create_gcp_table(initial_rows=None):
             {"field": "offset", "headerName": "Offset"},
             {"field": "student", "headerName": "Student"},
             {"field": "status", "headerName": "Status"},
-            {"field": "recorded_at", "headerName": "Recorded"},
         ],
         defaultColDef={
             "sortable": True,
@@ -143,7 +196,10 @@ def create_gcp_table(initial_rows=None):
             "animateRows": False,
             "rowSelection": {"mode": "singleRow"},
         },
-        style={"height": "170px", "width": "100%"},
+        style={
+            "height": "170px",
+            "width": "100%",
+        },
     )
 
 
@@ -153,7 +209,9 @@ def create_gcp_table(initial_rows=None):
 
 
 def create_layout(reference_map, historical_map, initial_rows=None):
-    """Build the main page while keeping UI independent of persistence."""
+    """Build the main application page."""
+
+    gcp_table = create_gcp_table(initial_rows=initial_rows)
 
     return html.Div(
         className="app-container",
@@ -163,11 +221,20 @@ def create_layout(reference_map, historical_map, initial_rows=None):
                 children=[
                     html.Div(
                         children=[
-                            html.Div("Historical Map GCP Collection", className="app-title"),
-                            html.Div("Reference ↔ Historical map alignment", className="app-subtitle"),
+                            html.Div(
+                                "Historical Map GCP Collection",
+                                className="app-title",
+                            ),
+                            html.Div(
+                                "Reference ↔ Historical map alignment",
+                                className="app-subtitle",
+                            ),
                         ],
                     ),
-                    html.Div("Prototype", className="prototype-badge"),
+                    html.Div(
+                        "Prototype",
+                        className="prototype-badge",
+                    ),
                 ],
             ),
             html.Div(
@@ -175,7 +242,9 @@ def create_layout(reference_map, historical_map, initial_rows=None):
                 children=[
                     create_map_panel(
                         title="REFERENCE MAP",
-                        subtitle="Orthophoto / web map / reference raster",
+                        subtitle=(
+                            "Orthophoto / web map / reference raster"
+                        ),
                         upload_id="reference-upload",
                         upload_label="+ Add Reference Layer",
                         opacity_id="reference-opacity",
@@ -197,9 +266,19 @@ def create_layout(reference_map, historical_map, initial_rows=None):
             html.Div(
                 className="table-section",
                 children=[
-                    html.Div("CONTROL POINTS", className="table-title"),
-                    create_gcp_table(initial_rows=initial_rows),
+                    html.Div(
+                        "CONTROL POINTS",
+                        className="table-title",
+                    ),
+                    gcp_table,
                 ],
             ),
+
+            # GCP workflow stores.
+            dcc.Store(id="gcp-pending", data=None),
+            dcc.Store(id="gcp-records", data=initial_rows or []),
+            dcc.Store(id="gcp-selected-id", data=None),
+            dcc.Store(id="gcp-drag-event", data=None),
+            dcc.Store(id="gcp-collection-active", data=False),
         ],
     )

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-"""PostgreSQL persistence for Ground Control Points.
+"""PostgreSQL-backed persistence for Ground Control Points.
 
-This store matches the actual gcps table created by the database SQL schema.
-It does not invent separate reference_crs/historical_crs columns; the
-database has one shared ``crs`` column.
+The application-facing record shape is deliberately kept independent of the
+PostgreSQL column names. This implementation matches the current gcps schema:
+
+    gcp_id, student_id, reference_layer_id, historical_layer_id,
+    reference_x, reference_y, reference_lon, reference_lat,
+    historical_pixel, historical_line,
+    historical_x, historical_y, historical_lon, historical_lat,
+    crs, offset_m, gcp_status, recorded_at
+
+Deletion is ownership-aware in the storage layer:
+- students may delete only their own GCPs;
+- administrators may delete any GCP.
 """
 
 from typing import Protocol
@@ -13,11 +22,22 @@ from database.db import SQLAlchemyPoolAdapter
 
 
 class GCPStore(Protocol):
+    """Persistence contract used by the GCP callbacks."""
+
     def list(self) -> list[dict]: ...
+
     def create(self, record: dict) -> dict: ...
+
     def get(self, gcp_id: str | int) -> dict | None: ...
+
     def update(self, gcp_id: str | int, changes: dict) -> dict: ...
-    def delete(self, gcp_id: str | int) -> None: ...
+
+    def delete(
+        self,
+        gcp_id: str | int,
+        requester_id: int,
+        requester_role: str = "student",
+    ) -> None: ...
 
 
 class PostgresGCPStore:
@@ -36,6 +56,7 @@ class PostgresGCPStore:
             return gcp_id
 
         value = str(gcp_id).strip()
+
         if value.upper().startswith("GCP-"):
             value = value[4:]
 
@@ -46,11 +67,11 @@ class PostgresGCPStore:
 
     @classmethod
     def _row_to_record(cls, row: dict) -> dict:
-        crs = row["crs"]
+        recorded_at = row["recorded_at"]
 
         return {
             "gcp_id": cls._display_id(row["gcp_id"]),
-            "crs": crs,
+            "crs": row["crs"],
             "reference_layer_id": str(row["reference_layer_id"]),
             "historical_layer_id": str(row["historical_layer_id"]),
             "student_id": str(row["student_id"]),
@@ -59,7 +80,7 @@ class PostgresGCPStore:
                 "y": float(row["reference_y"]),
                 "lon": float(row["reference_lon"]),
                 "lat": float(row["reference_lat"]),
-                "crs": crs,
+                "crs": row["crs"],
             },
             "historical": {
                 "pixel": float(row["historical_pixel"]),
@@ -68,43 +89,50 @@ class PostgresGCPStore:
                 "y": float(row["historical_y"]),
                 "lon": float(row["historical_lon"]),
                 "lat": float(row["historical_lat"]),
-                "crs": crs,
+                "crs": row["crs"],
             },
             "offset_m": float(row["offset_m"]),
             "status": row["gcp_status"],
-            "recorded_at": row["recorded_at"].isoformat(),
+            "recorded_at": (
+                recorded_at.isoformat()
+                if hasattr(recorded_at, "isoformat")
+                else str(recorded_at)
+            ),
         }
 
     @staticmethod
-    def _select_sql(extra_where: str = "") -> str:
-        return f"""
-            SELECT
-                gcp_id,
-                student_id,
-                reference_layer_id,
-                historical_layer_id,
-                reference_x,
-                reference_y,
-                reference_lon,
-                reference_lat,
-                historical_pixel,
-                historical_line,
-                historical_x,
-                historical_y,
-                historical_lon,
-                historical_lat,
-                crs,
-                offset_m,
-                gcp_status,
-                recorded_at
-            FROM gcps
-            {extra_where}
+    def _select_columns() -> str:
+        return """
+            gcp_id,
+            student_id,
+            reference_layer_id,
+            historical_layer_id,
+            reference_x,
+            reference_y,
+            reference_lon,
+            reference_lat,
+            historical_pixel,
+            historical_line,
+            historical_x,
+            historical_y,
+            historical_lon,
+            historical_lat,
+            crs,
+            offset_m,
+            gcp_status,
+            recorded_at
         """
 
     def list(self) -> list[dict]:
+        sql = f"""
+            SELECT {self._select_columns()}
+            FROM gcps
+            ORDER BY gcp_id
+        """
+
         with self.pool.connection() as conn:
             with conn.cursor(row_factory=True) as cur:
-                cur.execute(self._select_sql("ORDER BY gcp_id"))
+                cur.execute(sql)
                 return [
                     self._row_to_record(row)
                     for row in cur.fetchall()
@@ -113,13 +141,17 @@ class PostgresGCPStore:
     def get(self, gcp_id: str | int) -> dict | None:
         db_id = self._db_id(gcp_id)
 
+        sql = f"""
+            SELECT {self._select_columns()}
+            FROM gcps
+            WHERE gcp_id = %s
+        """
+
         with self.pool.connection() as conn:
             with conn.cursor(row_factory=True) as cur:
-                cur.execute(
-                    self._select_sql("WHERE gcp_id = %s"),
-                    (db_id,),
-                )
+                cur.execute(sql, (db_id,))
                 row = cur.fetchone()
+
                 return (
                     self._row_to_record(row)
                     if row is not None
@@ -153,8 +185,7 @@ class PostgresGCPStore:
             VALUES (
                 %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s
             )
             RETURNING gcp_id
@@ -180,44 +211,62 @@ class PostgresGCPStore:
                         historical["lat"],
                         record["crs"],
                         record["offset_m"],
-                        record["status"],
+                        record.get("status", "confirmed"),
                         record["recorded_at"],
                     ),
                 )
                 row = cur.fetchone()
+
                 if row is None:
                     raise RuntimeError(
-                        "INSERT returned no GCP ID."
+                        "GCP insert did not return a database ID."
                     )
+
                 db_gcp_id = row[0]
 
-        result = self.get(db_gcp_id)
-        if result is None:
-            raise RuntimeError(
-                f"GCP {db_gcp_id} was inserted but could not be read back."
-            )
-        return result
+        return self.get(db_gcp_id)
 
     def update(self, gcp_id: str | int, changes: dict) -> dict:
+        """Update supported GCP fields using the current schema."""
+
         current = self.get(gcp_id)
         if current is None:
             raise KeyError(f"Unknown GCP: {gcp_id}")
 
-        merged = {
-            **current,
-            "reference": {
-                **current["reference"],
-                **changes.get("reference", {}),
-            },
+        merged = dict(current)
+        allowed_top = {"student_id", "offset_m", "status", "crs"}
+        allowed_nested = {
+            "reference": {"x", "y", "lon", "lat"},
             "historical": {
-                **current["historical"],
-                **changes.get("historical", {}),
+                "pixel",
+                "line",
+                "x",
+                "y",
+                "lon",
+                "lat",
             },
         }
 
-        for key in ("student_id", "offset_m", "status", "crs"):
-            if key in changes:
-                merged[key] = changes[key]
+        for key, value in changes.items():
+            if key in allowed_top:
+                merged[key] = value
+            elif key in allowed_nested:
+                if not isinstance(value, dict):
+                    raise ValueError(
+                        f"{key} changes must be a dictionary."
+                    )
+                invalid = set(value) - allowed_nested[key]
+                if invalid:
+                    raise ValueError(
+                        "Unsupported fields in "
+                        f"{key}: {', '.join(sorted(invalid))}"
+                    )
+                merged[key] = {
+                    **merged[key],
+                    **value,
+                }
+            else:
+                raise ValueError(f"Unsupported GCP field: {key}")
 
         reference = merged["reference"]
         historical = merged["historical"]
@@ -265,20 +314,58 @@ class PostgresGCPStore:
                         db_id,
                     ),
                 )
+
                 if cur.rowcount != 1:
                     raise KeyError(f"Unknown GCP: {gcp_id}")
 
         return self.get(db_id)
 
-    def delete(self, gcp_id: str | int) -> None:
+    def delete(
+        self,
+        gcp_id: str | int,
+        requester_id: int,
+        requester_role: str = "student",
+    ) -> None:
+        """Delete one GCP after checking the requester's ownership."""
+
         db_id = self._db_id(gcp_id)
+        requester_id = int(requester_id)
+        role = str(requester_role).strip().lower()
+
+        if role == "admin":
+            sql = """
+                DELETE FROM gcps
+                WHERE gcp_id = %s
+                RETURNING gcp_id
+            """
+            params = (db_id,)
+        else:
+            sql = """
+                DELETE FROM gcps
+                WHERE gcp_id = %s
+                  AND student_id = %s
+                RETURNING gcp_id
+            """
+            params = (db_id, requester_id)
 
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
+                cur.execute(sql, params)
+                deleted = cur.fetchone()
+
+                if deleted is not None:
+                    return
+
                 cur.execute(
-                    "DELETE FROM gcps WHERE gcp_id = %s",
+                    "SELECT student_id FROM gcps WHERE gcp_id = %s",
                     (db_id,),
                 )
+                existing = cur.fetchone()
 
-                if cur.rowcount != 1:
+                if existing is None:
                     raise KeyError(f"Unknown GCP: {gcp_id}")
+
+                raise PermissionError(
+                    f"User {requester_id} is not allowed to delete "
+                    f"GCP {self._display_id(db_id)}."
+                )

@@ -1,24 +1,12 @@
 from __future__ import annotations
 
-"""Dash interaction workflow for Ground Control Points.
-
-Important identity rule:
-    - layer registry ``id`` remains the SHA-256 identity used by the UI.
-    - ``db_layer_id`` is the PostgreSQL layers.layer_id used by gcps FKs.
-
-Reference source:
-    - uploaded reference raster -> its PostgreSQL layer_id
-    - no uploaded reference raster -> OpenStreetMap basemap layer_id
-
-Historical GCP:
-    - Leaflet lat/lon is used for map interaction.
-    - historical raster pixel/line are calculated from the actual COG.
-"""
+"""Dash workflow for Ground Control Point collection and deletion."""
 
 from pathlib import Path
 
 import rasterio
 from dash import Input, Output, State, ctx, no_update
+from pyproj import Transformer
 
 from config import GCP_CRS, GCP_STUDENT_ID
 from database.db import get_db_pool
@@ -34,58 +22,45 @@ from storage.gcp_store import GCPStore
 from storage.layer_store import PostgresLayerStore
 
 
+# The layers table is shared by reference and historical layers.
 _LAYER_STORE = PostgresLayerStore(get_db_pool())
 
 
+# =========================================================
+# HELPERS
+# =========================================================
+
+
 def _format_pending_status(pending: dict) -> str:
-    """Build a compact status line using projected EPSG:25832 coordinates."""
-
     reference = leaflet_to_gcp_position(
-        [
-            pending["reference"]["lat"],
-            pending["reference"]["lon"],
-        ]
+        [pending["reference"]["lat"], pending["reference"]["lon"]]
     )
-
     historical = leaflet_to_gcp_position(
-        [
-            pending["historical"]["lat"],
-            pending["historical"]["lon"],
-        ]
+        [pending["historical"]["lat"], pending["historical"]["lon"]]
     )
 
     offset = displacement_m(reference, historical)
 
     return (
         "Pending GCP — "
-        f"Reference ({GCP_CRS}): "
-        f"{reference['x']:.3f}, {reference['y']:.3f} | "
-        f"Historical: "
-        f"{historical['x']:.3f}, {historical['y']:.3f} | "
+        f"Reference ({GCP_CRS}): {reference['x']:.3f}, {reference['y']:.3f} | "
+        f"Historical: {historical['x']:.3f}, {historical['y']:.3f} | "
         f"Offset: {offset:.2f} m"
     )
 
 
 def _pending_position(position) -> dict[str, float]:
-    """Normalize a Leaflet click/drag position."""
-
     if isinstance(position, dict):
         lat = position.get("lat")
         lon = position.get("lon", position.get("lng"))
-
         if lat is None or lon is None:
-            raise ValueError(
-                "Invalid Leaflet coordinate dictionary."
-            )
-
+            raise ValueError("Invalid Leaflet coordinate dictionary.")
         position = [lat, lon]
 
     return normalize_position(position)
 
 
 def _extract_click_position(click_data):
-    """Extract coordinates from Dash Leaflet clickData."""
-
     if not click_data:
         return None
 
@@ -102,8 +77,6 @@ def _extract_click_position(click_data):
 
 
 def _extract_drag_position(drag_event):
-    """Extract coordinates from the browser drag bridge."""
-
     if not drag_event:
         return None
 
@@ -119,150 +92,233 @@ def _extract_drag_position(drag_event):
     return None
 
 
-def _find_registry_entry(
-    registry: list[dict] | None,
-    ui_layer_id,
-) -> dict | None:
-    """Find a layer-registry entry by its SHA/UI identity."""
-
+def _registry_entry(registry, ui_layer_id):
     if not ui_layer_id:
         return None
 
+    value = str(ui_layer_id)
     return next(
         (
             item
             for item in (registry or [])
-            if item.get("id") == ui_layer_id
+            if str(item.get("id")) == value
         ),
         None,
     )
 
 
-def _get_db_layer_id(
-    registry: list[dict] | None,
+def _db_layer_id_from_registry(
+    registry,
     ui_layer_id,
-    *,
-    layer_type: str,
-) -> str | None:
-    """Resolve a UI layer identity to its PostgreSQL layer_id."""
+    expected_layer_type: str,
+) -> int | None:
+    """Resolve a UI layer ID to the numeric layers.layer_id."""
 
-    entry = _find_registry_entry(
-        registry,
-        ui_layer_id,
-    )
+    entry = _registry_entry(registry, ui_layer_id)
+    if entry:
+        if entry.get("db_layer_id") is not None:
+            return int(entry["db_layer_id"])
 
-    if entry and entry.get("db_layer_id"):
-        return str(entry["db_layer_id"])
+        ui_id = str(entry.get("id", ""))
+        layers = _LAYER_STORE.list()
+
+        # Current raster registries use the SHA-256/cog stem as the UI ID.
+        match = next(
+            (
+                layer
+                for layer in layers
+                if layer["layer_type"] == expected_layer_type
+                and (
+                    str(layer.get("sha256")) == ui_id
+                    or str(layer.get("layer_id")) == ui_id
+                )
+            ),
+            None,
+        )
+
+        if match:
+            return int(match["layer_id"])
+
+    # Also accept a numeric selector directly when one is supplied.
+    try:
+        candidate = int(str(ui_layer_id))
+    except (TypeError, ValueError):
+        return None
+
+    layer = _LAYER_STORE.get(candidate)
+    if layer and layer["layer_type"] == expected_layer_type:
+        return candidate
 
     return None
 
 
-def _get_basemap_reference_layer_id() -> str:
-    """Find the registered OpenStreetMap reference layer."""
+def _get_basemap_reference_layer_id() -> int:
+    """Return/create the OpenStreetMap reference layer row."""
 
-    for layer in _LAYER_STORE.list():
-        if (
-            layer.get("layer_type") == "reference"
-            and layer.get("source_type") == "basemap"
-            and layer.get("filename") == "OpenStreetMap"
-        ):
-            return str(layer["layer_id"])
-
-    raise ValueError(
-        "The OpenStreetMap basemap is not registered in the database."
+    layers = _LAYER_STORE.list()
+    existing = next(
+        (
+            layer
+            for layer in layers
+            if layer["layer_type"] == "reference"
+            and layer["source_type"] == "basemap"
+            and layer["filename"] == "OpenStreetMap"
+        ),
+        None,
     )
 
+    if existing:
+        return int(existing["layer_id"])
 
-def _raster_path_from_entry(entry: dict) -> Path:
-    """Return the historical COG path from a layer registry entry."""
+    created = _LAYER_STORE.upsert(
+        {
+            "layer_type": "reference",
+            "source_type": "basemap",
+            "filename": "OpenStreetMap",
+            "sha256": None,
+            "crs": "EPSG:3857",
+            "extent": [
+                -20037508.342789244,
+                -20037508.342789244,
+                20037508.342789244,
+                20037508.342789244,
+            ],
+            "width": None,
+            "height": None,
+        }
+    )
 
-    value = entry.get("cog_path")
-
-    if not value:
-        raise ValueError(
-            "Historical layer does not contain a COG path."
-        )
-
-    path = Path(value)
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Historical raster not found: {path}"
-        )
-
-    return path
+    return int(created["layer_id"])
 
 
 def _historical_pixel_line(
-    historical_position: dict,
-    historical_entry: dict,
+    registry,
+    ui_layer_id,
+    position: dict,
 ) -> tuple[float, float]:
-    """Convert WGS84 lon/lat to historical raster pixel/line.
+    """Compute continuous raster pixel/line for a historical point."""
 
-    rasterio.dataset.index() returns row/column. GDAL GCP order is
-    pixel/line, i.e. column/x first and row/y second.
-    """
+    entry = _registry_entry(registry, ui_layer_id)
+    if entry is None:
+        raise ValueError("The selected historical layer is unavailable.")
 
-    raster_path = _raster_path_from_entry(
-        historical_entry
-    )
+    cog_path = entry.get("cog_path")
+    if not cog_path:
+        raise ValueError(
+            "The selected historical layer has no server-side COG path."
+        )
 
-    lon = float(historical_position["lon"])
-    lat = float(historical_position["lat"])
+    path = Path(cog_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Historical COG not found: {path}"
+        )
 
-    with rasterio.open(raster_path) as src:
-        if src.crs is None:
-            raise ValueError(
-                "Historical raster has no CRS."
-            )
-
-        # Leaflet position is WGS84. Transform to the actual raster CRS.
-        from pyproj import Transformer
+    with rasterio.open(path) as dataset:
+        if dataset.crs is None:
+            raise ValueError("Historical raster has no CRS.")
 
         transformer = Transformer.from_crs(
             "EPSG:4326",
-            src.crs,
+            dataset.crs,
             always_xy=True,
         )
-
-        raster_x, raster_y = transformer.transform(
-            lon,
-            lat,
+        x, y = transformer.transform(
+            float(position["lon"]),
+            float(position["lat"]),
         )
 
-        row, col = src.index(
-            raster_x,
-            raster_y,
-        )
+        left, bottom, right, top = dataset.bounds
+        tolerance_x = abs(dataset.transform.a) * 0.5
+        tolerance_y = abs(dataset.transform.e) * 0.5
 
-        # dataset.index() returns integer row/column. Convert the pixel
-        # center to continuous pixel/line coordinates for GDAL.
-        if (
-            row < 0
-            or row >= src.height
-            or col < 0
-            or col >= src.width
+        if not (
+            left - tolerance_x <= x <= right + tolerance_x
+            and bottom - tolerance_y <= y <= top + tolerance_y
         ):
             raise ValueError(
-                "The selected historical point is outside "
-                "the historical raster."
+                "The historical GCP point is outside the selected raster."
             )
 
-        # Convert raster cell index to pixel/line position using the
-        # affine transform. Pixel/line values correspond to raster
-        # coordinates; use the clicked map position projected into the
-        # raster CRS for sub-pixel precision.
-        inv_transform = ~src.transform
-        pixel_x, pixel_y = inv_transform * (
-            raster_x,
-            raster_y,
+        pixel, line = (~dataset.transform) * (x, y)
+
+        if not (0.0 <= pixel < dataset.width and 0.0 <= line < dataset.height):
+            raise ValueError(
+                "The historical GCP point is outside the raster pixels."
+            )
+
+        return float(pixel), float(line)
+
+
+def _resolve_layer_ids(
+    pending: dict,
+    reference_registry,
+    historical_registry,
+) -> tuple[int, int]:
+    """Resolve required numeric FK IDs for a pending GCP."""
+
+    reference_ui_id = pending.get("reference_layer_id")
+    historical_ui_id = pending.get("historical_layer_id")
+
+    reference_db_id = _db_layer_id_from_registry(
+        reference_registry,
+        reference_ui_id,
+        expected_layer_type="reference",
+    )
+
+    if reference_db_id is None:
+        # OpenStreetMap is the default/fallback reference source.
+        reference_db_id = _get_basemap_reference_layer_id()
+
+    historical_db_id = _db_layer_id_from_registry(
+        historical_registry,
+        historical_ui_id,
+        expected_layer_type="historical",
+    )
+
+    if historical_db_id is None:
+        raise ValueError(
+            "A valid historical layer must be selected before confirming a GCP."
         )
 
-        return float(pixel_x), float(pixel_y)
+    if reference_db_id == historical_db_id:
+        raise ValueError(
+            "Reference and historical layers must be different."
+        )
+
+    return reference_db_id, historical_db_id
+
+
+def _no_change_return(
+    collection_active,
+    *,
+    status=no_update,
+    confirm_disabled=no_update,
+    cancel_disabled=no_update,
+    selected_id=no_update,
+    delete_disabled=no_update,
+):
+    return (
+        no_update,
+        no_update,
+        status,
+        confirm_disabled,
+        cancel_disabled,
+        True,
+        collection_active,
+        "Stop GCP" if collection_active else "Add GCP",
+        selected_id,
+        delete_disabled,
+    )
+
+
+# =========================================================
+# CALLBACKS
+# =========================================================
 
 
 def register_gcp_callbacks(app, store: GCPStore):
-    """Register all GCP interaction callbacks."""
+    """Register GCP collection, selection, and deletion callbacks."""
 
     @app.callback(
         Output("gcp-pending", "data"),
@@ -273,14 +329,19 @@ def register_gcp_callbacks(app, store: GCPStore):
         Output("gcp-drag-event", "clear_data"),
         Output("gcp-collection-active", "data"),
         Output("add-gcp-button", "children"),
+        Output("gcp-selected-id", "data"),
+        Output("delete-gcp-button", "disabled"),
         Input("add-gcp-button", "n_clicks"),
         Input("reference-map", "clickData"),
         Input("gcp-drag-event", "data"),
         Input("confirm-gcp-button", "n_clicks"),
         Input("cancel-gcp-button", "n_clicks"),
+        Input("gcp-table", "selectedRows"),
+        Input("delete-gcp-button", "n_clicks"),
         State("gcp-pending", "data"),
         State("gcp-records", "data"),
         State("gcp-collection-active", "data"),
+        State("gcp-selected-id", "data"),
         State("reference-layer-zoom-select", "value"),
         State("historical-layer-zoom-select", "value"),
         State("reference-layer-registry", "data"),
@@ -293,30 +354,111 @@ def register_gcp_callbacks(app, store: GCPStore):
         drag_event,
         confirm_clicks,
         cancel_clicks,
+        selected_rows,
+        delete_clicks,
         pending,
         records,
         collection_active,
-        reference_layer_ui_id,
-        historical_layer_ui_id,
+        selected_gcp_id,
+        reference_layer_id,
+        historical_layer_id,
         reference_registry,
         historical_registry,
     ):
-        del add_clicks, confirm_clicks, cancel_clicks
+        del add_clicks, confirm_clicks, cancel_clicks, delete_clicks
 
         records = records or []
+        selected_rows = selected_rows or []
         collection_active = bool(collection_active)
         triggered = ctx.triggered_id
 
-        button_label = (
-            "Stop GCP"
-            if collection_active
-            else "Add GCP"
-        )
+        # -------------------------------------------------
+        # Table selection
+        # -------------------------------------------------
+        if triggered == "gcp-table":
+            if not selected_rows:
+                return _no_change_return(
+                    collection_active,
+                    selected_id=None,
+                    delete_disabled=True,
+                )
+
+            selected_id = selected_rows[0].get("gcp_id")
+            if not selected_id:
+                return _no_change_return(
+                    collection_active,
+                    selected_id=None,
+                    delete_disabled=True,
+                )
+
+            return _no_change_return(
+                collection_active,
+                selected_id=selected_id,
+                delete_disabled=False,
+            )
 
         # -------------------------------------------------
-        # TOGGLE COLLECTION MODE
+        # Delete selected GCP
         # -------------------------------------------------
+        if triggered == "delete-gcp-button":
+            gcp_id = selected_gcp_id
+            if not gcp_id and selected_rows:
+                gcp_id = selected_rows[0].get("gcp_id")
 
+            if not gcp_id:
+                return _no_change_return(
+                    collection_active,
+                    status="Select a GCP in the table first.",
+                    selected_id=None,
+                    delete_disabled=True,
+                )
+
+            try:
+                student_id = int(GCP_STUDENT_ID)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "GCP_STUDENT_ID must contain a valid user_id."
+                ) from exc
+
+            try:
+                store.delete(
+                    gcp_id,
+                    requester_id=student_id,
+                    requester_role="student",
+                )
+            except PermissionError:
+                return _no_change_return(
+                    collection_active,
+                    status=f"You are not allowed to delete {gcp_id}.",
+                    selected_id=gcp_id,
+                    delete_disabled=False,
+                )
+            except KeyError as exc:
+                return _no_change_return(
+                    collection_active,
+                    status=str(exc),
+                    selected_id=None,
+                    delete_disabled=True,
+                )
+
+            records = store.list()
+
+            return (
+                None,
+                records,
+                f"Deleted {gcp_id}.",
+                True,
+                True,
+                True,
+                collection_active,
+                "Stop GCP" if collection_active else "Add GCP",
+                None,
+                True,
+            )
+
+        # -------------------------------------------------
+        # Toggle collection mode
+        # -------------------------------------------------
         if triggered == "add-gcp-button":
             collection_active = not collection_active
 
@@ -329,7 +471,6 @@ def register_gcp_callbacks(app, store: GCPStore):
                         "click a point on the reference map."
                     )
                 )
-
                 return (
                     no_update,
                     no_update,
@@ -339,18 +480,15 @@ def register_gcp_callbacks(app, store: GCPStore):
                     True,
                     True,
                     "Stop GCP",
+                    selected_gcp_id,
+                    not bool(selected_gcp_id),
                 )
 
             status = (
-                _format_pending_status(pending)
-                + " | Collection paused."
+                _format_pending_status(pending) + " | Collection paused."
                 if pending
-                else (
-                    "GCP collection inactive — "
-                    "click Add GCP to start."
-                )
+                else "GCP collection inactive — click Add GCP to start."
             )
-
             return (
                 no_update,
                 no_update,
@@ -360,119 +498,83 @@ def register_gcp_callbacks(app, store: GCPStore):
                 True,
                 False,
                 "Add GCP",
+                selected_gcp_id,
+                not bool(selected_gcp_id),
             )
 
         # -------------------------------------------------
-        # CLICK REFERENCE MAP
+        # Reference map click
         # -------------------------------------------------
-
         if triggered == "reference-map":
             if not collection_active:
-                return (
-                    no_update,
-                    no_update,
-                    (
+                return _no_change_return(
+                    collection_active,
+                    status=(
                         "GCP collection inactive — "
                         "click Add GCP before selecting a point."
                     ),
-                    not bool(pending),
-                    not bool(pending),
-                    True,
-                    collection_active,
-                    button_label,
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
                 )
 
             if pending:
-                return (
-                    no_update,
-                    no_update,
-                    "A GCP is already pending. "
-                    "Confirm or cancel it first.",
-                    False,
-                    False,
-                    True,
+                return _no_change_return(
                     collection_active,
-                    button_label,
-                )
-
-            click_position = _extract_click_position(
-                reference_click
-            )
-
-            if click_position is None:
-                return (
-                    no_update,
-                    no_update,
-                    "Could not read the clicked map position.",
-                    True,
-                    True,
-                    True,
-                    collection_active,
-                    button_label,
-                )
-
-            # A reference layer is optional in the UI because the base map
-            # itself is a valid registered reference source.
-            reference_db_id = _get_db_layer_id(
-                reference_registry,
-                reference_layer_ui_id,
-                layer_type="reference",
-            )
-
-            if reference_db_id is None:
-                reference_db_id = (
-                    _get_basemap_reference_layer_id()
-                )
-
-            historical_entry = _find_registry_entry(
-                historical_registry,
-                historical_layer_ui_id,
-            )
-
-            if historical_entry is None:
-                return (
-                    no_update,
-                    no_update,
-                    (
-                        "Upload a historical map before "
-                        "collecting GCPs."
+                    status=(
+                        "A GCP is already pending. "
+                        "Confirm or cancel it first."
                     ),
-                    True,
-                    True,
-                    True,
-                    collection_active,
-                    button_label,
+                    confirm_disabled=False,
+                    cancel_disabled=False,
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
                 )
 
-            # The initial historical marker is placed at the same geographic
-            # position as the reference click. Validate that this position is
-            # actually inside the historical raster.
+            click_position = _extract_click_position(reference_click)
+            if click_position is None:
+                return _no_change_return(
+                    collection_active,
+                    status="Could not read the clicked map position.",
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
+                )
+
             reference = _pending_position(click_position)
+
+            # Validate the historical layer at the initial reference point.
+            historical_entry = _registry_entry(
+                historical_registry,
+                historical_layer_id,
+            )
+            if historical_entry is None:
+                return _no_change_return(
+                    collection_active,
+                    status=(
+                        "Select a historical map before collecting GCPs."
+                    ),
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
+                )
 
             try:
                 _historical_pixel_line(
+                    historical_registry,
+                    historical_layer_id,
                     reference,
-                    historical_entry,
                 )
-            except (ValueError, FileNotFoundError) as exc:
-                return (
-                    no_update,
-                    no_update,
-                    str(exc),
-                    True,
-                    True,
-                    True,
+            except Exception as exc:
+                return _no_change_return(
                     collection_active,
-                    button_label,
+                    status=f"Cannot create GCP here: {exc}",
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
                 )
 
             pending = {
                 "reference": reference,
                 "historical": dict(reference),
-                "reference_layer_id": str(reference_db_id),
-                "historical_layer_id": str(
-                    historical_entry["db_layer_id"]
-                ),
+                "reference_layer_id": reference_layer_id,
+                "historical_layer_id": historical_layer_id,
             }
 
             return (
@@ -483,72 +585,42 @@ def register_gcp_callbacks(app, store: GCPStore):
                 False,
                 True,
                 collection_active,
-                button_label,
+                "Stop GCP",
+                selected_gcp_id,
+                not bool(selected_gcp_id),
             )
 
         # -------------------------------------------------
-        # DRAG HISTORICAL MARKER
+        # Historical marker drag
         # -------------------------------------------------
-
         if triggered == "gcp-drag-event":
-            drag_position = _extract_drag_position(
-                drag_event
-            )
+            drag_position = _extract_drag_position(drag_event)
 
             if not pending or drag_position is None:
-                return (
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                    True,
+                return _no_change_return(
                     collection_active,
-                    button_label,
-                )
-
-            historical = _pending_position(
-                drag_position
-            )
-
-            historical_entry = _find_registry_entry(
-                historical_registry,
-                historical_layer_ui_id,
-            )
-
-            if historical_entry is None:
-                return (
-                    no_update,
-                    no_update,
-                    "Historical layer is no longer available.",
-                    False,
-                    False,
-                    True,
-                    collection_active,
-                    button_label,
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
                 )
 
             try:
                 _historical_pixel_line(
-                    historical,
-                    historical_entry,
+                    historical_registry,
+                    pending.get("historical_layer_id"),
+                    _pending_position(drag_position),
                 )
-            except (ValueError, FileNotFoundError) as exc:
-                return (
-                    no_update,
-                    no_update,
-                    str(exc),
-                    False,
-                    False,
-                    True,
+            except Exception as exc:
+                return _no_change_return(
                     collection_active,
-                    button_label,
+                    status=f"Invalid historical position: {exc}",
+                    confirm_disabled=False,
+                    cancel_disabled=False,
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
                 )
 
-            pending = {
-                **pending,
-                "historical": historical,
-            }
+            pending = dict(pending)
+            pending["historical"] = _pending_position(drag_position)
 
             return (
                 pending,
@@ -558,97 +630,21 @@ def register_gcp_callbacks(app, store: GCPStore):
                 False,
                 True,
                 collection_active,
-                button_label,
+                "Stop GCP",
+                selected_gcp_id,
+                not bool(selected_gcp_id),
             )
 
         # -------------------------------------------------
-        # CONFIRM CURRENT GCP
+        # Confirm current GCP
         # -------------------------------------------------
-
         if triggered == "confirm-gcp-button":
             if not pending:
-                return (
-                    no_update,
-                    no_update,
-                    "No pending GCP to confirm.",
-                    True,
-                    True,
-                    True,
+                return _no_change_return(
                     collection_active,
-                    button_label,
-                )
-
-            reference = _pending_position(
-                pending["reference"]
-            )
-            historical = _pending_position(
-                pending["historical"]
-            )
-
-            historical_entry = _find_registry_entry(
-                historical_registry,
-                historical_layer_ui_id,
-            )
-
-            if historical_entry is None:
-                return (
-                    no_update,
-                    no_update,
-                    "Historical layer is no longer available.",
-                    False,
-                    False,
-                    True,
-                    collection_active,
-                    button_label,
-                )
-
-            try:
-                historical_pixel, historical_line = (
-                    _historical_pixel_line(
-                        historical,
-                        historical_entry,
-                    )
-                )
-            except (ValueError, FileNotFoundError) as exc:
-                return (
-                    no_update,
-                    no_update,
-                    str(exc),
-                    False,
-                    False,
-                    True,
-                    collection_active,
-                    button_label,
-                )
-
-            reference_db_id = pending.get(
-                "reference_layer_id"
-            )
-
-            historical_db_id = pending.get(
-                "historical_layer_id"
-            )
-
-            if not reference_db_id:
-                reference_db_id = (
-                    _get_basemap_reference_layer_id()
-                )
-
-            if not historical_db_id:
-                historical_db_id = (
-                    historical_entry.get("db_layer_id")
-                )
-
-            if not historical_db_id:
-                return (
-                    no_update,
-                    no_update,
-                    "Historical layer has no database layer ID.",
-                    False,
-                    False,
-                    True,
-                    collection_active,
-                    button_label,
+                    status="No pending GCP to confirm.",
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
                 )
 
             try:
@@ -658,30 +654,54 @@ def register_gcp_callbacks(app, store: GCPStore):
                     "GCP_STUDENT_ID must contain a valid user_id."
                 ) from exc
 
-            record = build_gcp_record(
-                reference_position=[
-                    reference["lat"],
-                    reference["lon"],
-                ],
-                historical_position=[
-                    historical["lat"],
-                    historical["lon"],
-                ],
-                historical_pixel=historical_pixel,
-                historical_line=historical_line,
-                student_id=student_id,
-                reference_layer_id=reference_db_id,
-                historical_layer_id=historical_db_id,
-            )
+            try:
+                reference_db_id, historical_db_id = _resolve_layer_ids(
+                    pending,
+                    reference_registry,
+                    historical_registry,
+                )
 
-            saved = store.create(record)
-            records = store.list()
+                pixel, line = _historical_pixel_line(
+                    historical_registry,
+                    pending.get("historical_layer_id"),
+                    pending["historical"],
+                )
+
+                record = build_gcp_record(
+                    reference_position=[
+                        pending["reference"]["lat"],
+                        pending["reference"]["lon"],
+                    ],
+                    historical_position=[
+                        pending["historical"]["lat"],
+                        pending["historical"]["lon"],
+                    ],
+                    historical_pixel=pixel,
+                    historical_line=line,
+                    student_id=str(student_id),
+                    reference_layer_id=str(reference_db_id),
+                    historical_layer_id=str(historical_db_id),
+                )
+
+                saved = store.create(record)
+                records = store.list()
+
+            except Exception as exc:
+                return _no_change_return(
+                    collection_active,
+                    status=f"Could not confirm GCP: {exc}",
+                    confirm_disabled=False,
+                    cancel_disabled=False,
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
+                )
 
             status = (
                 f"Confirmed {saved['gcp_id']} — "
-                f"offset: {saved['offset_m']:.2f} m | "
-                "Ready for next point."
+                f"offset: {saved['offset_m']:.2f} m"
             )
+            if collection_active:
+                status += " | Ready for next point."
 
             return (
                 None,
@@ -691,13 +711,14 @@ def register_gcp_callbacks(app, store: GCPStore):
                 True,
                 True,
                 collection_active,
-                button_label,
+                "Stop GCP" if collection_active else "Add GCP",
+                None,
+                True,
             )
 
         # -------------------------------------------------
-        # CANCEL CURRENT GCP
+        # Cancel current GCP
         # -------------------------------------------------
-
         if triggered == "cancel-gcp-button":
             status = (
                 "GCP cancelled — click a point on the reference map."
@@ -713,7 +734,9 @@ def register_gcp_callbacks(app, store: GCPStore):
                 True,
                 True,
                 collection_active,
-                button_label,
+                "Stop GCP" if collection_active else "Add GCP",
+                selected_gcp_id,
+                not bool(selected_gcp_id),
             )
 
         return (
@@ -724,11 +747,13 @@ def register_gcp_callbacks(app, store: GCPStore):
             no_update,
             True,
             collection_active,
-            button_label,
+            "Stop GCP" if collection_active else "Add GCP",
+            selected_gcp_id,
+            not bool(selected_gcp_id),
         )
 
     # -----------------------------------------------------
-    # RENDER MARKERS + TABLE
+    # Render markers + table
     # -----------------------------------------------------
 
     @app.callback(
@@ -739,11 +764,7 @@ def register_gcp_callbacks(app, store: GCPStore):
         Input("gcp-pending", "data"),
         Input("gcp-selected-id", "data"),
     )
-    def render_gcp_state(
-        records,
-        pending,
-        selected_gcp_id,
-    ):
+    def render_gcp_state(records, pending, selected_gcp_id):
         records = records or []
 
         reference_children = build_gcp_layer_children(
@@ -752,36 +773,12 @@ def register_gcp_callbacks(app, store: GCPStore):
             selected_gcp_id,
             "reference",
         )
-
         historical_children = build_gcp_layer_children(
             records,
             pending,
             selected_gcp_id,
             "historical",
         )
+        rows = [gcp_table_row(record) for record in records]
 
-        rows = [
-            gcp_table_row(record)
-            for record in records
-        ]
-
-        return (
-            reference_children,
-            historical_children,
-            rows,
-        )
-
-    # -----------------------------------------------------
-    # TABLE ROW SELECTION -> VISUAL HIGHLIGHT
-    # -----------------------------------------------------
-
-    @app.callback(
-        Output("gcp-selected-id", "data"),
-        Input("gcp-table", "selectedRows"),
-        prevent_initial_call=True,
-    )
-    def select_gcp(rows):
-        if not rows:
-            return None
-
-        return rows[0].get("gcp_id")
+        return reference_children, historical_children, rows
