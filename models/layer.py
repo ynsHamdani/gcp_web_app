@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-"""Domain model for uploaded raster-layer metadata.
-
-A layer is identified by its content hash and keeps descriptive/structural
-metadata that should survive the temporary raster cache. This module does not
-know about Dash or JSON/PostgreSQL.
-"""
+"""Domain model for durable raster-layer metadata."""
 
 
 def build_layer_record(
     *,
-    layer_id: str,
+    layer_type: str,
+    source_type: str,
     filename: str,
     sha256: str,
     crs: str,
@@ -18,13 +14,25 @@ def build_layer_record(
     width: int,
     height: int,
 ) -> dict:
-    """Build a database-ready layer metadata record."""
+    """Build a PostgreSQL-ready layer metadata record.
+
+    ``layer_id`` is deliberately not supplied here. PostgreSQL owns the
+    relational layer identity; SHA-256 remains the content identity.
+    """
+
+    if layer_type not in {"reference", "historical"}:
+        raise ValueError("layer_type must be 'reference' or 'historical'.")
+
+    if source_type not in {"uploaded", "basemap"}:
+        raise ValueError("source_type must be 'uploaded' or 'basemap'.")
 
     if len(extent) != 4:
         raise ValueError("extent must contain [xmin, ymin, xmax, ymax].")
 
     return {
-        "layer_id": str(layer_id),
+        "layer_id": None,
+        "layer_type": layer_type,
+        "source_type": source_type,
         "filename": str(filename),
         "sha256": str(sha256),
         "crs": str(crs),

@@ -1,205 +1,284 @@
 from __future__ import annotations
 
-"""Persistence abstraction for GCP records.
+"""PostgreSQL persistence for Ground Control Points.
 
-JSON is the prototype backend. The callback layer depends only on GCPStore,
-so a future PostgreSQL implementation can provide the same contract.
+This store matches the actual gcps table created by the database SQL schema.
+It does not invent separate reference_crs/historical_crs columns; the
+database has one shared ``crs`` column.
 """
 
-from pathlib import Path
-from threading import Lock
-import json
-import os
-import tempfile
 from typing import Protocol
+
+from database.db import SQLAlchemyPoolAdapter
 
 
 class GCPStore(Protocol):
-    """Persistence contract used by the GCP callbacks."""
-
     def list(self) -> list[dict]: ...
-
     def create(self, record: dict) -> dict: ...
-
-    def get(self, gcp_id: str) -> dict | None: ...
-
-    def update(self, gcp_id: str, changes: dict) -> dict: ...
-
-    def delete(self, gcp_id: str) -> None: ...
+    def get(self, gcp_id: str | int) -> dict | None: ...
+    def update(self, gcp_id: str | int, changes: dict) -> dict: ...
+    def delete(self, gcp_id: str | int) -> None: ...
 
 
-class JSONGCPStore:
-    """Atomic JSON-backed GCP store.
+class PostgresGCPStore:
+    """PostgreSQL implementation of the GCPStore contract."""
 
-    Legacy ``created_at``/``updated_at`` fields are normalized to the single
-    ``recorded_at`` field when records are read.
-    """
-
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = Lock()
-
-        if not self.path.exists():
-            self._atomic_write([])
-
-    def list(self) -> list[dict]:
-        with self._lock:
-            records, changed = self._read_with_migration()
-            if changed:
-                self._atomic_write(records)
-            return records
-
-    def get(self, gcp_id: str) -> dict | None:
-        with self._lock:
-            records, changed = self._read_with_migration()
-            if changed:
-                self._atomic_write(records)
-
-            return next(
-                (
-                    record
-                    for record in records
-                    if record.get("gcp_id") == gcp_id
-                ),
-                None,
-            )
-
-    def create(self, record: dict) -> dict:
-        with self._lock:
-            records, _ = self._read_with_migration()
-
-            new_record = dict(record)
-            new_record["gcp_id"] = self._next_id(records)
-
-            # Do not persist legacy timestamp fields if an older caller passes
-            # them accidentally.
-            new_record.pop("created_at", None)
-            new_record.pop("updated_at", None)
-            new_record.setdefault("recorded_at", None)
-
-            records.append(new_record)
-            self._atomic_write(records)
-            return new_record
-
-    def update(self, gcp_id: str, changes: dict) -> dict:
-        with self._lock:
-            records, _ = self._read_with_migration()
-
-            for index, record in enumerate(records):
-                if record.get("gcp_id") != gcp_id:
-                    continue
-
-                updated = {
-                    **record,
-                    **changes,
-                    "gcp_id": gcp_id,
-                }
-                updated.pop("created_at", None)
-                updated.pop("updated_at", None)
-                updated.setdefault("recorded_at", record.get("recorded_at"))
-
-                records[index] = updated
-                self._atomic_write(records)
-                return updated
-
-            raise KeyError(f"Unknown GCP: {gcp_id}")
-
-    def delete(self, gcp_id: str) -> None:
-        with self._lock:
-            records, _ = self._read_with_migration()
-
-            filtered = [
-                record
-                for record in records
-                if record.get("gcp_id") != gcp_id
-            ]
-
-            if len(filtered) == len(records):
-                raise KeyError(f"Unknown GCP: {gcp_id}")
-
-            self._atomic_write(filtered)
-
-    def _read_with_migration(self) -> tuple[list[dict], bool]:
-        try:
-            with self.path.open("r", encoding="utf-8") as file:
-                data = json.load(file)
-        except FileNotFoundError:
-            return [], False
-
-        if not isinstance(data, list):
-            raise ValueError(f"Invalid GCP JSON store: {self.path}")
-
-        normalized = []
-        changed = False
-
-        for record in data:
-            migrated = dict(record)
-
-            if "recorded_at" not in migrated:
-                legacy_timestamp = (
-                    migrated.get("updated_at")
-                    or migrated.get("created_at")
-                )
-                if legacy_timestamp is not None:
-                    migrated["recorded_at"] = legacy_timestamp
-                changed = True
-
-            if "created_at" in migrated:
-                migrated.pop("created_at", None)
-                changed = True
-
-            if "updated_at" in migrated:
-                migrated.pop("updated_at", None)
-                changed = True
-
-            if (
-                "student_id" not in migrated
-                and "student" in migrated
-            ):
-                migrated["student_id"] = migrated.pop("student")
-                changed = True
-
-            normalized.append(migrated)
-
-        return normalized, changed
-
-    def _atomic_write(self, records: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=f".{self.path.stem}_",
-            suffix=".tmp",
-            dir=self.path.parent,
-        )
-
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as file:
-                json.dump(records, file, indent=2, ensure_ascii=False)
-                file.write("\n")
-                file.flush()
-                os.fsync(file.fileno())
-
-            os.replace(tmp_name, self.path)
-
-        finally:
-            try:
-                os.unlink(tmp_name)
-            except FileNotFoundError:
-                pass
+    def __init__(self, pool: SQLAlchemyPoolAdapter):
+        self.pool = pool
 
     @staticmethod
-    def _next_id(records: list[dict]) -> str:
-        highest = 0
+    def _display_id(value: int) -> str:
+        return f"GCP-{int(value):04d}"
 
-        for record in records:
-            value = str(record.get("gcp_id", ""))
-            if not value.startswith("GCP-"):
-                continue
+    @staticmethod
+    def _db_id(gcp_id: str | int) -> int:
+        if isinstance(gcp_id, int):
+            return gcp_id
 
-            try:
-                highest = max(highest, int(value[4:]))
-            except ValueError:
-                continue
+        value = str(gcp_id).strip()
+        if value.upper().startswith("GCP-"):
+            value = value[4:]
 
-        return f"GCP-{highest + 1:04d}"
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise KeyError(f"Invalid GCP ID: {gcp_id}") from exc
+
+    @classmethod
+    def _row_to_record(cls, row: dict) -> dict:
+        crs = row["crs"]
+
+        return {
+            "gcp_id": cls._display_id(row["gcp_id"]),
+            "crs": crs,
+            "reference_layer_id": str(row["reference_layer_id"]),
+            "historical_layer_id": str(row["historical_layer_id"]),
+            "student_id": str(row["student_id"]),
+            "reference": {
+                "x": float(row["reference_x"]),
+                "y": float(row["reference_y"]),
+                "lon": float(row["reference_lon"]),
+                "lat": float(row["reference_lat"]),
+                "crs": crs,
+            },
+            "historical": {
+                "pixel": float(row["historical_pixel"]),
+                "line": float(row["historical_line"]),
+                "x": float(row["historical_x"]),
+                "y": float(row["historical_y"]),
+                "lon": float(row["historical_lon"]),
+                "lat": float(row["historical_lat"]),
+                "crs": crs,
+            },
+            "offset_m": float(row["offset_m"]),
+            "status": row["gcp_status"],
+            "recorded_at": row["recorded_at"].isoformat(),
+        }
+
+    @staticmethod
+    def _select_sql(extra_where: str = "") -> str:
+        return f"""
+            SELECT
+                gcp_id,
+                student_id,
+                reference_layer_id,
+                historical_layer_id,
+                reference_x,
+                reference_y,
+                reference_lon,
+                reference_lat,
+                historical_pixel,
+                historical_line,
+                historical_x,
+                historical_y,
+                historical_lon,
+                historical_lat,
+                crs,
+                offset_m,
+                gcp_status,
+                recorded_at
+            FROM gcps
+            {extra_where}
+        """
+
+    def list(self) -> list[dict]:
+        with self.pool.connection() as conn:
+            with conn.cursor(row_factory=True) as cur:
+                cur.execute(self._select_sql("ORDER BY gcp_id"))
+                return [
+                    self._row_to_record(row)
+                    for row in cur.fetchall()
+                ]
+
+    def get(self, gcp_id: str | int) -> dict | None:
+        db_id = self._db_id(gcp_id)
+
+        with self.pool.connection() as conn:
+            with conn.cursor(row_factory=True) as cur:
+                cur.execute(
+                    self._select_sql("WHERE gcp_id = %s"),
+                    (db_id,),
+                )
+                row = cur.fetchone()
+                return (
+                    self._row_to_record(row)
+                    if row is not None
+                    else None
+                )
+
+    def create(self, record: dict) -> dict:
+        reference = record["reference"]
+        historical = record["historical"]
+
+        sql = """
+            INSERT INTO gcps (
+                student_id,
+                reference_layer_id,
+                historical_layer_id,
+                reference_x,
+                reference_y,
+                reference_lon,
+                reference_lat,
+                historical_pixel,
+                historical_line,
+                historical_x,
+                historical_y,
+                historical_lon,
+                historical_lat,
+                crs,
+                offset_m,
+                gcp_status,
+                recorded_at
+            )
+            VALUES (
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s
+            )
+            RETURNING gcp_id
+        """
+
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql,
+                    (
+                        int(record["student_id"]),
+                        int(record["reference_layer_id"]),
+                        int(record["historical_layer_id"]),
+                        reference["x"],
+                        reference["y"],
+                        reference["lon"],
+                        reference["lat"],
+                        historical["pixel"],
+                        historical["line"],
+                        historical["x"],
+                        historical["y"],
+                        historical["lon"],
+                        historical["lat"],
+                        record["crs"],
+                        record["offset_m"],
+                        record["status"],
+                        record["recorded_at"],
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError(
+                        "INSERT returned no GCP ID."
+                    )
+                db_gcp_id = row[0]
+
+        result = self.get(db_gcp_id)
+        if result is None:
+            raise RuntimeError(
+                f"GCP {db_gcp_id} was inserted but could not be read back."
+            )
+        return result
+
+    def update(self, gcp_id: str | int, changes: dict) -> dict:
+        current = self.get(gcp_id)
+        if current is None:
+            raise KeyError(f"Unknown GCP: {gcp_id}")
+
+        merged = {
+            **current,
+            "reference": {
+                **current["reference"],
+                **changes.get("reference", {}),
+            },
+            "historical": {
+                **current["historical"],
+                **changes.get("historical", {}),
+            },
+        }
+
+        for key in ("student_id", "offset_m", "status", "crs"):
+            if key in changes:
+                merged[key] = changes[key]
+
+        reference = merged["reference"]
+        historical = merged["historical"]
+        db_id = self._db_id(gcp_id)
+
+        sql = """
+            UPDATE gcps
+            SET
+                student_id = %s,
+                reference_x = %s,
+                reference_y = %s,
+                reference_lon = %s,
+                reference_lat = %s,
+                historical_pixel = %s,
+                historical_line = %s,
+                historical_x = %s,
+                historical_y = %s,
+                historical_lon = %s,
+                historical_lat = %s,
+                crs = %s,
+                offset_m = %s,
+                gcp_status = %s
+            WHERE gcp_id = %s
+        """
+
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql,
+                    (
+                        int(merged["student_id"]),
+                        reference["x"],
+                        reference["y"],
+                        reference["lon"],
+                        reference["lat"],
+                        historical["pixel"],
+                        historical["line"],
+                        historical["x"],
+                        historical["y"],
+                        historical["lon"],
+                        historical["lat"],
+                        merged["crs"],
+                        merged["offset_m"],
+                        merged["status"],
+                        db_id,
+                    ),
+                )
+                if cur.rowcount != 1:
+                    raise KeyError(f"Unknown GCP: {gcp_id}")
+
+        return self.get(db_id)
+
+    def delete(self, gcp_id: str | int) -> None:
+        db_id = self._db_id(gcp_id)
+
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM gcps WHERE gcp_id = %s",
+                    (db_id,),
+                )
+
+                if cur.rowcount != 1:
+                    raise KeyError(f"Unknown GCP: {gcp_id}")

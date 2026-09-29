@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import atexit
+
 from dash import Dash
 
 from callbacks.gcp import register_gcp_callbacks
@@ -9,18 +11,14 @@ from callbacks.raster import (
     register_raster_callbacks,
     register_raster_routes,
 )
-from config import (
-    GCP_JSON_PATH,
-    HISTORICAL_LAYER_JSON_PATH,
-    REFERENCE_LAYER_JSON_PATH,
-)
+from database.db import close_db_pool, get_db_pool
 from maps.map_views import (
     create_historical_map,
     create_reference_map,
 )
 from models.gcp import gcp_table_row
-from storage.gcp_store import JSONGCPStore
-from storage.layer_store import JSONLayerStore
+from storage.gcp_store import PostgresGCPStore
+from storage.layer_store import PostgresLayerStore
 from ui.controls import create_app_layout
 
 
@@ -36,24 +34,25 @@ app = Dash(
 
 
 # =========================================================
-# STORAGE BACKENDS
+# POSTGRESQL STORAGE
 # =========================================================
 
-gcp_store = JSONGCPStore(GCP_JSON_PATH)
+# Authentication does not exist yet, so config.yaml supplies one development
+# user ID. Later the authentication/session layer will provide the current
+# user's ID without changing the storage interfaces.
+db_pool = get_db_pool()
 
-reference_layer_store = JSONLayerStore(
-    REFERENCE_LAYER_JSON_PATH
-)
-
-historical_layer_store = JSONLayerStore(
-    HISTORICAL_LAYER_JSON_PATH
-)
+gcp_store = PostgresGCPStore(db_pool)
+reference_layer_store = PostgresLayerStore(db_pool)
+historical_layer_store = PostgresLayerStore(db_pool)
 
 initial_gcp_records = gcp_store.list()
 initial_gcp_rows = [
     gcp_table_row(record)
     for record in initial_gcp_records
 ]
+
+atexit.register(close_db_pool)
 
 
 # =========================================================
@@ -77,11 +76,7 @@ app.layout = create_app_layout(
 
 register_raster_routes(app)
 
-register_raster_callbacks(
-    app,
-    reference_layer_store=reference_layer_store,
-    historical_layer_store=historical_layer_store,
-)
+register_raster_callbacks(app)
 
 register_navigation_callbacks(app)
 register_opacity_callbacks(app)

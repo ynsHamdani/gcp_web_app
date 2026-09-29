@@ -2,30 +2,121 @@ from __future__ import annotations
 
 """Dash callbacks and Flask routes for temporary raster uploads.
 
-The browser keeps an active layer registry for the current page. In parallel,
-this module persists durable layer metadata to a JSON LayerStore. The latter
-contains filename, SHA-256, CRS, extent, width and height and is independent
-of the temporary COG cache.
+The browser/UI keeps the SHA-256 value as its temporary layer identity.
+PostgreSQL has its own BIGINT layer_id. This module registers every uploaded
+raster in PostgreSQL and stores both identities in the Dash layer registry:
+
+    id           -> SHA-256 / temporary raster identity used by the UI
+    db_layer_id  -> PostgreSQL layers.layer_id used by GCP foreign keys
 """
 
+from pathlib import Path
+
+import rasterio
 from dash import Input, Output, State, no_update
 from flask import send_file
 
 from config import (
+    APP_BASE_URL,
+    GCP_CRS,
     TEMP_RASTER_DIR,
     TEMP_RASTER_TTL_HOURS,
-    APP_BASE_URL,
     TITILER_URL,
 )
+from database.db import get_db_pool
 from maps.map_views import build_layer_children
 from maps.raster import (
     calculate_fit_zoom,
     cleanup_expired_temp_rasters,
-    get_raster_metadata,
     prepare_uploaded_raster,
 )
-from models.layer import build_layer_record
-from storage.layer_store import LayerStore
+from storage.layer_store import PostgresLayerStore
+
+
+# =========================================================
+# DATABASE LAYER STORE
+# =========================================================
+
+_layer_store = PostgresLayerStore(get_db_pool())
+_basemap_db_layer_id: str | None = None
+
+
+def _ensure_basemap_layer() -> dict:
+    """Return the registered OpenStreetMap reference layer.
+
+    The basemap is represented as a normal row in the layers table, so every
+    GCP can always have a non-null reference_layer_id.
+    """
+
+    global _basemap_db_layer_id
+
+    if _basemap_db_layer_id is not None:
+        existing = _layer_store.get(_basemap_db_layer_id)
+        if existing is not None:
+            return existing
+
+    for layer in _layer_store.list():
+        if (
+            layer.get("layer_type") == "reference"
+            and layer.get("source_type") == "basemap"
+            and layer.get("filename") == "OpenStreetMap"
+        ):
+            _basemap_db_layer_id = str(layer["layer_id"])
+            return layer
+
+    # Web Mercator world extent. Width/height are intentionally unknown for
+    # a slippy-map basemap and are therefore stored as NULL.
+    basemap = _layer_store.upsert(
+        {
+            "layer_type": "reference",
+            "source_type": "basemap",
+            "filename": "OpenStreetMap",
+            "sha256": None,
+            "crs": "EPSG:3857",
+            "extent": [
+                -20037508.342789244,
+                -20037508.342789244,
+                20037508.342789244,
+                20037508.342789244,
+            ],
+            "width": None,
+            "height": None,
+        }
+    )
+
+    _basemap_db_layer_id = str(basemap["layer_id"])
+    return basemap
+
+
+def _layer_record_from_raster(
+    asset,
+    filename: str,
+    layer_type: str,
+) -> dict:
+    """Build a PostgreSQL layer record from the prepared COG."""
+
+    with rasterio.open(asset.cog_path) as src:
+        if src.crs is None:
+            raise ValueError(
+                f"Raster '{filename}' has no CRS."
+            )
+
+        return {
+            "layer_type": layer_type,
+            "source_type": "uploaded",
+            "filename": filename,
+            # prepare_uploaded_raster uses the SHA-256 as the COG stem.
+            "sha256": asset.cog_path.stem,
+            "crs": src.crs.to_string(),
+            "extent": [
+                float(src.bounds.left),
+                float(src.bounds.bottom),
+                float(src.bounds.right),
+                float(src.bounds.top),
+            ],
+            "width": int(src.width),
+            "height": int(src.height),
+        }
 
 
 # =========================================================
@@ -63,7 +154,7 @@ def register_raster_routes(app):
 
 
 def _layer_options(layer_registry):
-    """Convert active browser registry entries into dropdown options."""
+    """Convert registry entries into Dash dropdown options."""
 
     return [
         {
@@ -75,7 +166,7 @@ def _layer_options(layer_registry):
 
 
 def _update_registry(layer_registry, new_entry):
-    """Replace an active entry with the same ID, otherwise append it."""
+    """Replace an entry with the same SHA identity, otherwise append it."""
 
     registry = [
         item
@@ -87,13 +178,8 @@ def _update_registry(layer_registry, new_entry):
     return registry
 
 
-def _raster_entry(
-    asset,
-    filename,
-    opacity_percent,
-    metadata,
-):
-    """Create the active browser layer entry."""
+def _raster_entry(asset, filename, opacity_percent, db_layer_id):
+    """Create the UI registry entry for one raster layer."""
 
     opacity = (
         float(opacity_percent) / 100.0
@@ -101,12 +187,12 @@ def _raster_entry(
         else 1.0
     )
 
-    # The SHA-256 directory/file stem is the stable layer identity.
+    # Keep this SHA-based ID because existing map/navigation code depends on it.
     layer_id = asset.cog_path.stem
 
     return {
-        # Existing browser-registry keys.
         "id": layer_id,
+        "db_layer_id": str(db_layer_id),
         "name": filename,
         "original_path": "",
         "cog_path": str(asset.cog_path),
@@ -117,35 +203,23 @@ def _raster_entry(
         "minzoom": asset.minzoom,
         "maxzoom": asset.maxzoom,
         "opacity": opacity,
-
-        # Persistent layer metadata.
-        "layer_id": layer_id,
-        "filename": filename,
-        "sha256": layer_id,
-        "crs": metadata["crs"],
-        "extent": metadata["extent"],
-        "width": metadata["width"],
-        "height": metadata["height"],
     }
 
 
-def _persist_layer(layer_store: LayerStore, asset, filename: str):
-    """Persist layer metadata while keeping the raster itself temporary."""
+def _register_uploaded_layer(
+    asset,
+    filename: str,
+    layer_type: str,
+) -> dict:
+    """Register/reuse an uploaded raster in PostgreSQL."""
 
-    metadata = get_raster_metadata(asset.cog_path)
-    layer_id = asset.cog_path.stem
-
-    record = build_layer_record(
-        layer_id=layer_id,
+    layer_record = _layer_record_from_raster(
+        asset=asset,
         filename=filename,
-        sha256=layer_id,
-        crs=metadata["crs"],
-        extent=metadata["extent"],
-        width=metadata["width"],
-        height=metadata["height"],
+        layer_type=layer_type,
     )
 
-    return layer_store.upsert(record), metadata
+    return _layer_store.upsert(layer_record)
 
 
 # =========================================================
@@ -153,14 +227,19 @@ def _persist_layer(layer_store: LayerStore, asset, filename: str):
 # =========================================================
 
 
-def register_raster_callbacks(
-    app,
-    reference_layer_store: LayerStore,
-    historical_layer_store: LayerStore,
-):
+def register_raster_callbacks(app):
     """Register reference and historical upload callbacks."""
 
     cleanup_expired_temp_rasters(TEMP_RASTER_TTL_HOURS)
+
+    # Make the basemap available as a real reference layer before GCP
+    # collection starts.
+    try:
+        _ensure_basemap_layer()
+    except Exception:
+        # Do not prevent the rest of the Dash application from starting.
+        # A later GCP action will surface the database error clearly.
+        pass
 
     # -----------------------------------------------------
     # REFERENCE UPLOAD
@@ -200,22 +279,18 @@ def register_raster_callbacks(
                 raster_kind="reference",
             )
 
-            persistent_record, metadata = _persist_layer(
-                reference_layer_store,
-                asset,
-                filename,
+            db_layer = _register_uploaded_layer(
+                asset=asset,
+                filename=filename,
+                layer_type="reference",
             )
 
             entry = _raster_entry(
-                asset,
-                filename,
-                reference_opacity,
-                metadata,
+                asset=asset,
+                filename=filename,
+                opacity_percent=reference_opacity,
+                db_layer_id=db_layer["layer_id"],
             )
-
-            # Keep the browser registry shape compatible with existing
-            # navigation/GCP callbacks.
-            entry["id"] = persistent_record["layer_id"]
 
             registry = _update_registry(
                 layer_registry,
@@ -284,20 +359,18 @@ def register_raster_callbacks(
                 raster_kind="historical",
             )
 
-            persistent_record, metadata = _persist_layer(
-                historical_layer_store,
-                asset,
-                filename,
+            db_layer = _register_uploaded_layer(
+                asset=asset,
+                filename=filename,
+                layer_type="historical",
             )
 
             entry = _raster_entry(
-                asset,
-                filename,
-                historical_opacity,
-                metadata,
+                asset=asset,
+                filename=filename,
+                opacity_percent=historical_opacity,
+                db_layer_id=db_layer["layer_id"],
             )
-
-            entry["id"] = persistent_record["layer_id"]
 
             registry = _update_registry(
                 layer_registry,

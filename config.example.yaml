@@ -1,0 +1,17 @@
+# Copy this file to config.yaml and fill in your local values.
+
+database:
+  host: localhost
+  port: 5432
+  name: gcp_web_app
+  user: postgres
+  password: YOUR_POSTGRES_PASSWORD
+  min_pool_size: 1
+  max_pool_size: 5
+  pool_timeout_seconds: 10
+
+development:
+  # Must exist in users.user_id until authentication is implemented.
+  user_id: 1
+
+

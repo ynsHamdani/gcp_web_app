@@ -1,109 +1,312 @@
 from __future__ import annotations
 
-"""Persistence abstraction for raster-layer metadata.
+"""PostgreSQL persistence for layer metadata.
 
-The callbacks depend on this small interface rather than on JSON. A future
-PostgreSQL implementation can provide the same methods.
+This module matches the actual PostgreSQL ``layers`` table exactly.
+
+Database columns:
+    layer_id
+    layer_type
+    source_type
+    layer_filename
+    sha256
+    crs
+    extent_xmin
+    extent_ymin
+    extent_xmax
+    extent_ymax
+    width
+    height
+    created_at
+
+Database access is provided through the SQLAlchemy-backed pool in
+``database.db``. No direct ``psycopg_pool`` usage is required here.
 """
 
-from pathlib import Path
-from threading import Lock
-import json
-import os
-import tempfile
 from typing import Protocol
+
+from database.db import SQLAlchemyPoolAdapter
 
 
 class LayerStore(Protocol):
-    """Persistence contract for one layer type."""
+    """Persistence contract used by the raster/application layer."""
 
     def list(self) -> list[dict]: ...
 
-    def get(self, layer_id: str) -> dict | None: ...
+    def get(self, layer_id: str | int) -> dict | None: ...
 
     def upsert(self, record: dict) -> dict: ...
 
 
-class JSONLayerStore:
-    """Atomic JSON-backed layer metadata store."""
+class PostgresLayerStore:
+    """PostgreSQL implementation of the LayerStore contract."""
 
-    def __init__(self, path: str | Path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = Lock()
+    def __init__(self, pool: SQLAlchemyPoolAdapter):
+        self.pool = pool
 
-        if not self.path.exists():
-            self._atomic_write([])
+    @staticmethod
+    def _row_to_record(row: dict) -> dict:
+        """Convert a PostgreSQL row to the application layer representation."""
+
+        return {
+            "layer_id": str(row["layer_id"]),
+            "layer_type": row["layer_type"],
+            "source_type": row["source_type"],
+            "filename": row["layer_filename"],
+            "sha256": row["sha256"],
+            "crs": row["crs"],
+            "extent": [
+                float(row["extent_xmin"]),
+                float(row["extent_ymin"]),
+                float(row["extent_xmax"]),
+                float(row["extent_ymax"]),
+            ],
+            "width": int(row["width"]) if row["width"] is not None else None,
+            "height": int(row["height"]) if row["height"] is not None else None,
+            "created_at": row["created_at"].isoformat(),
+        }
+
+    @staticmethod
+    def _select_columns() -> str:
+        """Return the exact layer column list from the database schema."""
+
+        return """
+            layer_id,
+            layer_type,
+            source_type,
+            layer_filename,
+            sha256,
+            crs,
+            extent_xmin,
+            extent_ymin,
+            extent_xmax,
+            extent_ymax,
+            width,
+            height,
+            created_at
+        """
 
     def list(self) -> list[dict]:
-        with self._lock:
-            return self._read()
+        """Return all registered layers."""
 
-    def get(self, layer_id: str) -> dict | None:
-        with self._lock:
-            return next(
-                (
-                    record
-                    for record in self._read()
-                    if record.get("layer_id") == layer_id
-                ),
-                None,
-            )
+        sql = f"""
+            SELECT
+                {self._select_columns()}
+            FROM layers
+            ORDER BY layer_id
+        """
+
+        with self.pool.connection() as conn:
+            with conn.cursor(row_factory=True) as cur:
+                cur.execute(sql)
+
+                return [
+                    self._row_to_record(row)
+                    for row in cur.fetchall()
+                ]
+
+    def get(self, layer_id: str | int) -> dict | None:
+        """Return one layer by its database layer_id."""
+
+        try:
+            db_layer_id = int(layer_id)
+        except (TypeError, ValueError) as exc:
+            raise KeyError(
+                f"Invalid layer ID: {layer_id}"
+            ) from exc
+
+        sql = f"""
+            SELECT
+                {self._select_columns()}
+            FROM layers
+            WHERE layer_id = %s
+        """
+
+        with self.pool.connection() as conn:
+            with conn.cursor(row_factory=True) as cur:
+                cur.execute(sql, (db_layer_id,))
+                row = cur.fetchone()
+
+                return (
+                    self._row_to_record(row)
+                    if row is not None
+                    else None
+                )
 
     def upsert(self, record: dict) -> dict:
-        layer_id = record.get("layer_id")
-        if not layer_id:
-            raise ValueError("Layer record requires layer_id.")
+        """Insert a layer or reuse an existing file with the same SHA-256.
 
-        with self._lock:
-            records = self._read()
-            new_record = dict(record)
+        Uploaded raster files have a SHA-256 and are deduplicated through the
+        UNIQUE constraint on ``layers.sha256``.
 
-            replaced = False
-            for index, existing in enumerate(records):
-                if existing.get("layer_id") == layer_id:
-                    records[index] = new_record
-                    replaced = True
-                    break
+        Basemap records may have ``sha256 = NULL``. PostgreSQL allows multiple
+        NULL values under a normal UNIQUE constraint, so each basemap instance
+        can be represented separately when explicitly registered.
+        """
 
-            if not replaced:
-                records.append(new_record)
+        extent = record.get("extent")
 
-            self._atomic_write(records)
-            return new_record
+        if not isinstance(extent, (list, tuple)) or len(extent) != 4:
+            raise ValueError(
+                "Layer extent must contain "
+                "[xmin, ymin, xmax, ymax]."
+            )
 
-    def _read(self) -> list[dict]:
-        try:
-            with self.path.open("r", encoding="utf-8") as file:
-                data = json.load(file)
-        except FileNotFoundError:
-            return []
+        xmin, ymin, xmax, ymax = extent
 
-        if not isinstance(data, list):
-            raise ValueError(f"Invalid layer JSON store: {self.path}")
+        layer_type = record.get("layer_type")
+        source_type = record.get("source_type")
+        filename = record.get("filename")
+        sha256 = record.get("sha256")
+        crs = record.get("crs")
+        width = record.get("width")
+        height = record.get("height")
 
-        return data
+        if not layer_type:
+            raise ValueError("layer_type is required.")
 
-    def _atomic_write(self, records: list[dict]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not source_type:
+            raise ValueError("source_type is required.")
 
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=f".{self.path.stem}_",
-            suffix=".tmp",
-            dir=self.path.parent,
-        )
+        if not filename:
+            raise ValueError("filename is required.")
 
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as file:
-                json.dump(records, file, indent=2, ensure_ascii=False)
-                file.write("\n")
-                file.flush()
-                os.fsync(file.fileno())
+        if not crs:
+            raise ValueError("crs is required.")
 
-            os.replace(tmp_name, self.path)
+        if source_type == "uploaded":
+            if not sha256:
+                raise ValueError(
+                    "Uploaded layers require a SHA-256 hash."
+                )
 
-        finally:
-            try:
-                os.unlink(tmp_name)
-            except FileNotFoundError:
-                pass
+            if width is None or height is None:
+                raise ValueError(
+                    "Uploaded layers require width and height."
+                )
+
+        if sha256 is None:
+            # Basemap/non-file source: no SHA-256 conflict handling.
+            sql = """
+                INSERT INTO layers (
+                    layer_type,
+                    source_type,
+                    layer_filename,
+                    sha256,
+                    crs,
+                    extent_xmin,
+                    extent_ymin,
+                    extent_xmax,
+                    extent_ymax,
+                    width,
+                    height
+                )
+                VALUES (
+                    %s, %s, %s, NULL, %s,
+                    %s, %s, %s, %s,
+                    %s, %s
+                )
+                RETURNING
+                    layer_id,
+                    layer_type,
+                    source_type,
+                    layer_filename,
+                    sha256,
+                    crs,
+                    extent_xmin,
+                    extent_ymin,
+                    extent_xmax,
+                    extent_ymax,
+                    width,
+                    height,
+                    created_at
+            """
+
+            parameters = (
+                layer_type,
+                source_type,
+                filename,
+                crs,
+                xmin,
+                ymin,
+                xmax,
+                ymax,
+                width,
+                height,
+            )
+
+        else:
+            # Uploaded file: reuse/update the existing row having the same
+            # SHA-256, preserving the same database layer_id.
+            sql = """
+                INSERT INTO layers (
+                    layer_type,
+                    source_type,
+                    layer_filename,
+                    sha256,
+                    crs,
+                    extent_xmin,
+                    extent_ymin,
+                    extent_xmax,
+                    extent_ymax,
+                    width,
+                    height
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s
+                )
+                ON CONFLICT (sha256)
+                DO UPDATE SET
+                    layer_type = EXCLUDED.layer_type,
+                    source_type = EXCLUDED.source_type,
+                    layer_filename = EXCLUDED.layer_filename,
+                    crs = EXCLUDED.crs,
+                    extent_xmin = EXCLUDED.extent_xmin,
+                    extent_ymin = EXCLUDED.extent_ymin,
+                    extent_xmax = EXCLUDED.extent_xmax,
+                    extent_ymax = EXCLUDED.extent_ymax,
+                    width = EXCLUDED.width,
+                    height = EXCLUDED.height
+                RETURNING
+                    layer_id,
+                    layer_type,
+                    source_type,
+                    layer_filename,
+                    sha256,
+                    crs,
+                    extent_xmin,
+                    extent_ymin,
+                    extent_xmax,
+                    extent_ymax,
+                    width,
+                    height,
+                    created_at
+            """
+
+            parameters = (
+                layer_type,
+                source_type,
+                filename,
+                sha256,
+                crs,
+                xmin,
+                ymin,
+                xmax,
+                ymax,
+                width,
+                height,
+            )
+
+        with self.pool.connection() as conn:
+            with conn.cursor(row_factory=True) as cur:
+                cur.execute(sql, parameters)
+                row = cur.fetchone()
+
+                if row is None:
+                    raise RuntimeError(
+                        "Layer upsert did not return a database row."
+                    )
+
+                return self._row_to_record(row)
