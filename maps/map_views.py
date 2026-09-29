@@ -143,7 +143,7 @@ def build_layer_children(
 # =========================================================
 
 def create_reference_map():
-    """Create the reference map with browser-side synchronization hooks."""
+    """Create the reference map with robust browser-side syncing."""
 
     return dl.Map(
         id="reference-map",
@@ -156,16 +156,20 @@ def create_reference_map():
             "moveend": ns("syncReference"),
             "zoomend": ns("syncReference"),
         },
-        children=(
-            create_layers_control("reference-layer-control")
-            + [dl.LayerGroup(id="reference-gcp-layer")]
-        ),
+        children=[
+            *create_layers_control(
+                "reference-layer-control"
+            ),
+            dl.LayerGroup(
+                id="reference-gcp-layer",
+            ),
+        ],
         style=MAP_STYLE,
     )
 
 
 def create_historical_map():
-    """Create the historical map with the same synchronization hooks."""
+    """Create the historical map with robust browser-side syncing."""
 
     return dl.Map(
         id="historical-map",
@@ -178,9 +182,13 @@ def create_historical_map():
             "moveend": ns("syncHistorical"),
             "zoomend": ns("syncHistorical"),
         },
-        children=(
-            create_layers_control("historical-layer-control")
-            + [dl.LayerGroup(id="historical-gcp-layer")]
-        ),
+        children=[
+            *create_layers_control(
+                "historical-layer-control"
+            ),
+            dl.LayerGroup(
+                id="historical-gcp-layer",
+            ),
+        ],
         style=MAP_STYLE,
     )
