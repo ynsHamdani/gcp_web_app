@@ -96,13 +96,30 @@ def create_map_panel(
 def create_gcp_controls():
     """Create controls for GCP collection and deletion."""
 
-    button_style = {
+    primary_button_style = {
+        "padding": "7px 12px",
+        "borderRadius": "5px",
+        "border": "none",
+        "background": "#2563eb",
+        "color": "#ffffff",
+        "cursor": "pointer",
+        "fontSize": "12px",
+    }
+
+    secondary_button_style = {
         "padding": "7px 12px",
         "borderRadius": "5px",
         "border": "1px solid #d1d5db",
         "background": "#ffffff",
+        "color": "#374151",
         "cursor": "pointer",
         "fontSize": "12px",
+    }
+
+    delete_button_style = {
+        **secondary_button_style,
+        "color": "#b91c1c",
+        "border": "1px solid #fca5a5",
     }
 
     return html.Div(
@@ -124,6 +141,7 @@ def create_gcp_controls():
                     ),
                 ],
             ),
+
             html.Div(
                 className="gcp-buttons",
                 children=[
@@ -132,40 +150,39 @@ def create_gcp_controls():
                         id="add-gcp-button",
                         n_clicks=0,
                         className="primary-button",
-                        style=button_style,
+                        style=primary_button_style,
                     ),
+
                     html.Button(
                         "Confirm GCP",
                         id="confirm-gcp-button",
                         n_clicks=0,
                         disabled=True,
                         className="primary-button",
-                        style=button_style,
+                        style=primary_button_style,
                     ),
+
                     html.Button(
                         "Cancel",
                         id="cancel-gcp-button",
                         n_clicks=0,
                         disabled=True,
                         className="secondary-button",
-                        style=button_style,
+                        style=secondary_button_style,
                     ),
+
                     html.Button(
                         "Delete GCP",
                         id="delete-gcp-button",
                         n_clicks=0,
                         disabled=True,
                         className="secondary-button",
-                        style={
-                            **button_style,
-                            "color": "#b91c1c",
-                        },
+                        style=delete_button_style,
                     ),
                 ],
             ),
         ],
     )
-
 
 # =========================================================
 # GCP TABLE
