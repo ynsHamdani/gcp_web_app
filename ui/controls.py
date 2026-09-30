@@ -3,9 +3,13 @@ from __future__ import annotations
 from dash import dcc, html
 
 
+# =========================================================
+# COMMON STYLES
+# =========================================================
+
 ZOOM_CONTROL_STYLE = {
     "position": "fixed",
-    "top": "80px",
+    "top": "195px",
     "zIndex": "1000",
     "width": "280px",
     "backgroundColor": "white",
@@ -26,20 +30,38 @@ ZOOM_TITLE_STYLE = {
 }
 
 
-def create_layer_zoom_control(map_type: str, title: str, placeholder: str):
-    """Create a layer selector and synchronized zoom button."""
+# =========================================================
+# LAYER ZOOM CONTROL
+# =========================================================
+
+
+def create_layer_zoom_control(
+    map_type: str,
+    title: str,
+    placeholder: str,
+):
+    """Create one layer selector and synchronized zoom button."""
 
     if map_type not in {"reference", "historical"}:
-        raise ValueError("map_type must be 'reference' or 'historical'")
+        raise ValueError(
+            "map_type must be 'reference' or 'historical'"
+        )
 
     position_style = {
         **ZOOM_CONTROL_STYLE,
-        "left": "20px" if map_type == "reference" else "calc(50% + 20px)",
+        "left": (
+            "20px"
+            if map_type == "reference"
+            else "calc(50% + 20px)"
+        ),
     }
 
     return html.Div(
         [
-            html.Div(title, style=ZOOM_TITLE_STYLE),
+            html.Div(
+                title,
+                style=ZOOM_TITLE_STYLE,
+            ),
             dcc.Dropdown(
                 id=f"{map_type}-layer-zoom-select",
                 options=[],
@@ -58,37 +80,79 @@ def create_layer_zoom_control(map_type: str, title: str, placeholder: str):
     )
 
 
+# =========================================================
+# BOTH MAP ZOOM CONTROLS
+# =========================================================
+
+
 def create_zoom_controls():
+    """Create the layer-navigation controls for both maps."""
+
     return [
         create_layer_zoom_control(
-            "reference", "Zoom to reference layer", "Select a reference map..."
+            map_type="reference",
+            title="Zoom to reference layer",
+            placeholder="Select a reference map...",
         ),
         create_layer_zoom_control(
-            "historical", "Zoom to historical layer", "Select a historical map..."
+            map_type="historical",
+            title="Zoom to historical layer",
+            placeholder="Select a historical map...",
         ),
     ]
 
 
-def create_app_layout(reference_map, historical_map, initial_rows=None, initial_records=None):
-    """Build the complete application layout and browser-side GCP stores."""
+# =========================================================
+# APP LAYOUT COMPATIBILITY WRAPPER
+# =========================================================
+
+
+def create_app_layout(
+    reference_map,
+    historical_map,
+    initial_records=None,
+    initial_rows=None,
+):
+    """Build the complete application layout."""
 
     from ui.layout import create_layout
 
-    records = initial_records or []
+    if initial_records is not None:
+        records = initial_records
+    else:
+        records = initial_rows or []
 
     return html.Div(
         [
             create_layout(
                 reference_map=reference_map,
                 historical_map=historical_map,
-                initial_rows=initial_rows or [],
+                initial_rows=records,
             ),
             *create_zoom_controls(),
-            dcc.Store(id="reference-layer-registry", data=[]),
-            dcc.Store(id="historical-layer-registry", data=[]),
-            dcc.Store(id="gcp-records", data=records),
-            dcc.Store(id="gcp-pending", data=None),
-            dcc.Store(id="gcp-drag-event", data=None),
-            dcc.Store(id="gcp-selected-id", data=None),
+
+            # Uploaded raster metadata registries.
+            dcc.Store(
+                id="reference-layer-registry",
+                data=[],
+            ),
+            dcc.Store(
+                id="historical-layer-registry",
+                data=[],
+            ),
+
+            # Browser-side navigation command and acknowledgements.
+            dcc.Store(
+                id="map-navigation-command",
+                data=None,
+            ),
+            dcc.Store(
+                id="map-navigation-ack",
+                data=None,
+            ),
+            dcc.Store(
+                id="map-cursor-ack",
+                data=None,
+            ),
         ]
     )

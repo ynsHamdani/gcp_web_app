@@ -143,7 +143,7 @@ def build_layer_children(
 # =========================================================
 
 def create_reference_map():
-    """Create the reference map with robust browser-side syncing."""
+    """Create the reference map with browser-side two-map synchronisation."""
 
     return dl.Map(
         id="reference-map",
@@ -151,9 +151,9 @@ def create_reference_map():
         zoom=INITIAL_ZOOM,
         eventHandlers={
             "load": ns("registerReference"),
-            "mouseover": ns("registerReference"),
-            "mousedown": ns("registerReference"),
-            "moveend": ns("syncReference"),
+            "drag": ns("syncReference"),
+            "dragend": ns("syncReference"),
+            "zoom": ns("syncReference"),
             "zoomend": ns("syncReference"),
         },
         children=[
@@ -169,7 +169,7 @@ def create_reference_map():
 
 
 def create_historical_map():
-    """Create the historical map with robust browser-side syncing."""
+    """Create the historical map with browser-side two-map synchronisation."""
 
     return dl.Map(
         id="historical-map",
@@ -177,9 +177,9 @@ def create_historical_map():
         zoom=INITIAL_ZOOM,
         eventHandlers={
             "load": ns("registerHistorical"),
-            "mouseover": ns("registerHistorical"),
-            "mousedown": ns("registerHistorical"),
-            "moveend": ns("syncHistorical"),
+            "drag": ns("syncHistorical"),
+            "dragend": ns("syncHistorical"),
+            "zoom": ns("syncHistorical"),
             "zoomend": ns("syncHistorical"),
         },
         children=[

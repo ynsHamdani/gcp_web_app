@@ -16,7 +16,7 @@ def _find_layer(registry, layer_id):
         (
             item
             for item in (registry or [])
-            if item.get("id") == layer_id
+            if str(item.get("id")) == str(layer_id)
         ),
         None,
     )
@@ -34,6 +34,20 @@ def _find_gcp(records, gcp_id):
         ),
         None,
     )
+
+
+def _normalise_view(center, zoom):
+    """Return Leaflet-compatible numeric center/zoom values."""
+    if not center or len(center) != 2 or zoom is None:
+        return None, None
+
+    try:
+        normalised_center = [float(center[0]), float(center[1])]
+        normalised_zoom = float(zoom)
+    except (TypeError, ValueError):
+        return None, None
+
+    return normalised_center, normalised_zoom
 
 
 # =========================================================
@@ -80,12 +94,7 @@ def register_navigation_callbacks(app):
             gcp = _find_gcp(gcp_records, selected_gcp_id)
 
             if gcp is None:
-                return (
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                )
+                return no_update, no_update, no_update, no_update
 
             reference = gcp.get("reference", {})
             historical = gcp.get("historical", {})
@@ -96,40 +105,26 @@ def register_navigation_callbacks(app):
             historical_lon = historical.get("lon")
 
             if reference_lat is None or reference_lon is None:
-                return (
-                    no_update,
-                    no_update,
-                    no_update,
-                    no_update,
-                )
+                return no_update, no_update, no_update, no_update
 
-            # Use the midpoint so both the reference and historical GCP
-            # markers remain visible even when there is a small offset.
+            # Keep both GCP positions visible even when there is a small offset.
             if historical_lat is not None and historical_lon is not None:
                 center = [
                     (float(reference_lat) + float(historical_lat)) / 2.0,
                     (float(reference_lon) + float(historical_lon)) / 2.0,
                 ]
             else:
-                center = [
-                    float(reference_lat),
-                    float(reference_lon),
-                ]
+                center = [float(reference_lat), float(reference_lon)]
 
-            # A fixed close-in zoom is appropriate for GCP inspection.
-            zoom = 18
+            center, zoom = _normalise_view(center, 18)
+            if center is None:
+                return no_update, no_update, no_update, no_update
 
-            return (
-                center,
-                zoom,
-                center,
-                zoom,
-            )
+            return center, zoom, center, zoom
 
         # -------------------------------------------------
         # Zoom to selected raster layer
         # -------------------------------------------------
-
         if triggered == "reference-layer-zoom-button":
             registry = reference_registry or []
             selected_id = selected_reference_id
@@ -139,42 +134,23 @@ def register_navigation_callbacks(app):
             selected_id = selected_historical_id
 
         else:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
+            return no_update, no_update, no_update, no_update
 
         if not selected_id:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
+            return no_update, no_update, no_update, no_update
 
-        selected_layer = _find_layer(
-            registry,
-            selected_id,
-        )
-
+        selected_layer = _find_layer(registry, selected_id)
         if selected_layer is None:
-            return (
-                no_update,
-                no_update,
-                no_update,
-                no_update,
-            )
+            return no_update, no_update, no_update, no_update
 
-        center = selected_layer["center"]
-        zoom = selected_layer["zoom"]
-
-        # Both maps deliberately receive the same view. The browser-side sync
-        # layer then keeps them linked during use.
-        return (
-            center,
-            zoom,
-            center,
-            zoom,
+        center, zoom = _normalise_view(
+            selected_layer.get("center"),
+            selected_layer.get("zoom"),
         )
+
+        if center is None:
+            return no_update, no_update, no_update, no_update
+
+        # Both maps deliberately receive the same view. The browser-side
+        # synchronizer recognises this as intentional navigation.
+        return center, zoom, center, zoom
