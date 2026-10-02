@@ -445,58 +445,109 @@ def get_titiler_asset(
 ) -> tuple[str, list[list[float]], int, int]:
     """Request TiTiler metadata and build a usable tile URL.
 
-    The local COG path is used to derive reliable WGS84 bounds for Leaflet.
-    TiTiler itself receives the HTTP raster URL for tile metadata and tiles.
+    Band handling is determined automatically from the local COG:
+
+    - 1 band  -> bidx=1
+    - 3 bands -> bidx=1&bidx=2&bidx=3
+    - 4 bands -> RGB only: bidx=1&bidx=2&bidx=3
+    - other band counts -> explicit error
+
+    The local COG is also used to derive reliable WGS84 bounds for Leaflet.
+    TiTiler receives the HTTP raster URL for metadata and tile generation.
     """
 
     base_url = titiler_url.rstrip("/")
 
     # -----------------------------------------------------
-    # 1. Fetch COG metadata from TiTiler.
+    # 1. Fetch COG metadata from TiTiler
     # -----------------------------------------------------
 
     info_url = f"{base_url}/cog/info"
+
     response = requests.get(
         info_url,
         params={"url": raster_url},
         timeout=30,
     )
     response.raise_for_status()
+
     info = response.json()
 
-    # TiTiler's /cog/info endpoint returns bounds in the dataset CRS.
-    # Those coordinates are NOT necessarily longitude/latitude (for example,
-    # EPSG:25832 uses metres).  Leaflet, however, needs WGS84 coordinates for
-    # the map center, and calculate_fit_zoom() expects degrees.
+    # -----------------------------------------------------
+    # 2. Inspect the local COG
     #
-    # Therefore, derive the geographic bounds directly from the COG and only
-    # use TiTiler for the service metadata needed by the tile layer.
+    # We use the same rasterio.open() call to obtain:
+    #   - band count
+    #   - CRS
+    #   - geographic bounds
+    # -----------------------------------------------------
+
     if cog_path is not None:
         with rasterio.open(cog_path) as src:
+
             if src.crs is None:
                 raise ValueError(
                     "The raster has no CRS; geographic bounds cannot be calculated."
                 )
 
+            band_count = int(src.count)
+
+            if band_count < 1:
+                raise ValueError(
+                    "The raster contains no bands."
+                )
+
+            # Convert raster bounds from the native CRS to WGS84.
             west, south, east, north = transform_bounds(
                 src.crs,
                 "EPSG:4326",
                 *src.bounds,
                 densify_pts=21,
             )
-    else:
-        # Compatibility fallback for callers that do not provide cog_path.
-        bounds_raw = info.get("bounds")
-        if not bounds_raw or len(bounds_raw) != 4:
-            raise ValueError("TiTiler did not return valid raster bounds.")
 
-        info_crs = str(info.get("crs", "")).upper()
-        if "4326" not in info_crs and "CRS84" not in info_crs:
+    else:
+        # -------------------------------------------------
+        # Compatibility fallback
+        #
+        # This path is only used by older callers that do not
+        # provide cog_path. We cannot reliably inspect the
+        # number of bands here, so obtain it from TiTiler info.
+        # -------------------------------------------------
+
+        band_count = int(
+            info.get("count")
+            or info.get("band_count")
+            or 0
+        )
+
+        if band_count < 1:
             raise ValueError(
-                "Geographic bounds require the COG path or a WGS84 TiTiler response."
+                "Unable to determine the raster band count."
             )
 
-        west, south, east, north = map(float, bounds_raw)
+        bounds_raw = info.get("bounds")
+
+        if not bounds_raw or len(bounds_raw) != 4:
+            raise ValueError(
+                "TiTiler did not return valid raster bounds."
+            )
+
+        info_crs = str(info.get("crs", "")).upper()
+
+        if "4326" not in info_crs and "CRS84" not in info_crs:
+            raise ValueError(
+                "Geographic bounds require the COG path or "
+                "a WGS84 TiTiler response."
+            )
+
+        west, south, east, north = map(
+            float,
+            bounds_raw,
+        )
+
+    # -----------------------------------------------------
+    # 3. Build Leaflet bounds
+    # -----------------------------------------------------
 
     bounds = [
         [float(south), float(west)],
@@ -504,28 +555,67 @@ def get_titiler_asset(
     ]
 
     # -----------------------------------------------------
-    # 2. Determine zoom limits.
+    # 4. Determine zoom limits
     # -----------------------------------------------------
 
     minzoom = int(info.get("minzoom", 0))
     maxzoom = int(info.get("maxzoom", 24))
 
     # -----------------------------------------------------
-    # 3. TileJSON endpoint.
+    # 5. Determine which raster bands TiTiler should render
+    #
+    # IMPORTANT:
+    # Do NOT use return_mask=true here.
+    #
+    # For a 3-band RGB COG, return_mask can produce an additional
+    # output band, resulting in a 4-band PNG that the PNG encoder
+    # cannot handle in this configuration.
     # -----------------------------------------------------
-    # The map already uses the TiTiler COG tile endpoint.  Keeping the URL
-    # construction here avoids hard-coding a generated tile URL into the UI.
+
+    if band_count == 1:
+        band_params = "&bidx=1"
+
+    elif band_count == 3:
+        band_params = (
+            "&bidx=1"
+            "&bidx=2"
+            "&bidx=3"
+        )
+
+    elif band_count == 4:
+        # Treat the fourth band as alpha/auxiliary data.
+        # Render only RGB because the application currently
+        # requests PNG RGB tiles.
+        band_params = (
+            "&bidx=1"
+            "&bidx=2"
+            "&bidx=3"
+        )
+
+    else:
+        raise ValueError(
+            f"Unsupported raster band count: {band_count}. "
+            "The application supports 1-band, 3-band, "
+            "and 4-band RGB/alpha rasters."
+        )
+
+    # -----------------------------------------------------
+    # 6. Build TiTiler tile URL
     # -----------------------------------------------------
 
     tile_url = (
         f"{base_url}/cog/tiles/WebMercatorQuad/"
         f"{{z}}/{{x}}/{{y}}.png"
         f"?url={quote(raster_url, safe='')}"
-        f"&return_mask=true"
+        f"{band_params}"
     )
 
-    return tile_url, bounds, minzoom, maxzoom
-
+    return (
+        tile_url,
+        bounds,
+        minzoom,
+        maxzoom,
+    )
 
 # =========================================================
 # MAP ZOOM CALCULATION
