@@ -266,7 +266,7 @@ def create_layout(
                                     action="/logout",
                                     method="post",
                                     children=[
-                                        html.Input(
+                                        dcc.Input(
                                             type="hidden",
                                             name="csrf_token",
                                             value=csrf_token or "",
