@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 import base64
 import hashlib
+from hmac import new as hmac_new
 import math
 import os
 import re
@@ -35,6 +36,7 @@ from rio_cogeo.profiles import cog_profiles
 
 from config import (
     APP_BASE_URL,
+    RASTER_SIGNING_KEY,
     TITILER_URL,
     TEMP_RASTER_DIR,
     TEMP_RASTER_STAGING_DIR,
@@ -787,9 +789,21 @@ def prepare_uploaded_raster(
     # BUILD TI TILER ASSET
     # -----------------------------------------------------
 
+    if not RASTER_SIGNING_KEY:
+        raise RuntimeError(
+            "RASTER_SIGNING_KEY is missing. Configure it in the app's .env file."
+        )
+
     relative_cog = cog_path.relative_to(TEMP_RASTER_DIR).as_posix()
+    expires_at = int(time.time()) + (24 * 60 * 60)
+    signed_payload = f"{relative_cog}:{expires_at}".encode("utf-8")
+    signature = hmac_new(
+        RASTER_SIGNING_KEY.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
     raster_url = (
-        f"{APP_BASE_URL.rstrip('/')}/raster/{quote(relative_cog, safe='/')}"
+        f"{APP_BASE_URL.rstrip('/')}/raster/{quote(relative_cog, safe='/')}?expires={expires_at}&signature={signature}"
     )
 
     tile_url, bounds, minzoom, maxzoom = get_titiler_asset(

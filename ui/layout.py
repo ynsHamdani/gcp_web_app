@@ -225,7 +225,14 @@ def create_gcp_table(initial_rows=None):
 # =========================================================
 
 
-def create_layout(reference_map, historical_map, initial_rows=None):
+def create_layout(
+    reference_map,
+    historical_map,
+    initial_rows=None,
+    auth_username=None,
+    auth_role=None,
+    csrf_token=None,
+):
     """Build the main application page."""
 
     gcp_table = create_gcp_table(initial_rows=initial_rows)
@@ -249,8 +256,40 @@ def create_layout(reference_map, historical_map, initial_rows=None):
                         ],
                     ),
                     html.Div(
-                        "Prototype",
-                        className="prototype-badge",
+                        (
+                            [
+                                html.Span(
+                                    f"{auth_username} · {str(auth_role or '').title()}",
+                                    style={"fontSize": "12px", "fontWeight": "600", "marginRight": "12px"},
+                                ),
+                                html.Form(
+                                    action="/logout",
+                                    method="post",
+                                    children=[
+                                        html.Input(
+                                            type="hidden",
+                                            name="csrf_token",
+                                            value=csrf_token or "",
+                                        ),
+                                        html.Button(
+                                            "Log out",
+                                            type="submit",
+                                            className="secondary-button",
+                                            style={"padding": "6px 10px", "cursor": "pointer"},
+                                        ),
+                                    ],
+                                    style={"display": "inline"},
+                                ),
+                            ]
+                            if auth_username
+                            else "Prototype"
+                        ),
+                        className=(
+                            "auth-session-controls"
+                            if auth_username
+                            else "prototype-badge"
+                        ),
+                        style={"display": "flex", "alignItems": "center", "gap": "10px"},
                     ),
                 ],
             ),

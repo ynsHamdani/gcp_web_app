@@ -8,7 +8,8 @@ import rasterio
 from dash import Input, Output, State, ctx, no_update
 from pyproj import Transformer
 
-from config import GCP_CRS, GCP_STUDENT_ID
+from config import GCP_CRS
+from flask_login import current_user
 from database.db import get_db_pool
 from maps.gcp import build_gcp_layer_children
 from models.gcp import (
@@ -413,18 +414,17 @@ def register_gcp_callbacks(app, store: GCPStore):
                     delete_disabled=True,
                 )
 
-            try:
-                student_id = int(GCP_STUDENT_ID)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "GCP_STUDENT_ID must contain a valid user_id."
-                ) from exc
+            if not current_user.is_authenticated:
+                raise PermissionError(
+                    "Authentication is required to manage GCPs."
+                )
+            student_id = int(current_user.get_id())
 
             try:
                 store.delete(
                     gcp_id,
                     requester_id=student_id,
-                    requester_role="student",
+                    requester_role=current_user.role,
                 )
             except PermissionError:
                 return _no_change_return(
@@ -647,12 +647,11 @@ def register_gcp_callbacks(app, store: GCPStore):
                     delete_disabled=not bool(selected_gcp_id),
                 )
 
-            try:
-                student_id = int(GCP_STUDENT_ID)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "GCP_STUDENT_ID must contain a valid user_id."
-                ) from exc
+            if not current_user.is_authenticated:
+                raise PermissionError(
+                    "Authentication is required to manage GCPs."
+                )
+            student_id = int(current_user.get_id())
 
             try:
                 reference_db_id, historical_db_id = _resolve_layer_ids(

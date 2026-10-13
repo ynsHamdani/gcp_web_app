@@ -21,6 +21,8 @@ dependencies:
   - pip:
       - dash
       - dash-leaflet
+      - Flask-Login
+      - Flask-WTF
       - gunicorn
       - rio-cogeo
       - python-dotenv

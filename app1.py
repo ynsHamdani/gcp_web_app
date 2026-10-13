@@ -3,7 +3,12 @@ from __future__ import annotations
 import atexit
 
 from dash import Dash
+from flask import has_request_context
+from flask_login import current_user
+from flask_wtf.csrf import generate_csrf
 
+from auth import init_auth
+from auth.store import AuthStore
 from callbacks.gcp import register_gcp_callbacks
 from callbacks.navigation import register_navigation_callbacks
 from callbacks.opacity import register_opacity_callbacks
@@ -20,6 +25,7 @@ from models.gcp import gcp_table_row
 from storage.gcp_store import PostgresGCPStore
 from storage.layer_store import PostgresLayerStore
 from ui.controls import create_app_layout
+from config import SECRET_KEY, RASTER_SIGNING_KEY
 
 
 # =========================================================
@@ -41,6 +47,13 @@ app = Dash(
 # user ID. Later the authentication/session layer will provide the current
 # user's ID without changing the storage interfaces.
 db_pool = get_db_pool()
+auth_store = AuthStore(db_pool)
+init_auth(
+    app.server,
+    auth_store,
+    secret_key=SECRET_KEY,
+    raster_signing_key=RASTER_SIGNING_KEY,
+)
 
 gcp_store = PostgresGCPStore(db_pool)
 reference_layer_store = PostgresLayerStore(db_pool)
@@ -62,12 +75,30 @@ atexit.register(close_db_pool)
 reference_map = create_reference_map()
 historical_map = create_historical_map()
 
-app.layout = create_app_layout(
-    reference_map=reference_map,
-    historical_map=historical_map,
-    initial_records=initial_gcp_records,
-    initial_rows=initial_gcp_rows,
-)
+def serve_layout():
+    # Dash may evaluate the layout once at startup without a request.
+    # Only read Flask-Login/session state inside a request context.
+    if has_request_context() and current_user.is_authenticated:
+        auth_username = current_user.username
+        auth_role = current_user.role
+        csrf_token = generate_csrf()
+    else:
+        auth_username = None
+        auth_role = None
+        csrf_token = ""
+
+    return create_app_layout(
+        reference_map=reference_map,
+        historical_map=historical_map,
+        initial_records=initial_gcp_records,
+        initial_rows=initial_gcp_rows,
+        auth_username=auth_username,
+        auth_role=auth_role,
+        csrf_token=csrf_token,
+    )
+
+
+app.layout = serve_layout
 
 
 # =========================================================

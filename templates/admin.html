@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · Historical Map GCP Collection</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f3f6fa; color: #172033; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 28px; background: #fff; border-bottom: 1px solid #dbe2ea; }
+    h1 { font-size: 1.2rem; margin: 0; }
+    .who { color: #64748b; font-size: .9rem; margin-top: 4px; }
+    main { max-width: 900px; margin: 36px auto; padding: 0 20px; }
+    section { background: #fff; border: 1px solid #dbe2ea; border-radius: 12px; padding: 24px; }
+    .note { color: #475569; line-height: 1.55; }
+    button { border: 1px solid #cbd5e1; border-radius: 7px; padding: 9px 13px; background: #fff; color: #172033; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Historical Map GCP Collection — Admin</h1>
+      <div class="who">Signed in as {{ user.username }} (administrator)</div>
+    </div>
+    <form method="post" action="{{ url_for('auth.logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Log out</button>
+    </form>
+  </header>
+  <main>
+    <section>
+      <h2>Administration</h2>
+      <p class="note">Authentication and role separation are enabled. User management and the GCP-based transformation workflow are intentionally not part of Phase 1.</p>
+    </section>
+  </main>
+</body>
+</html>

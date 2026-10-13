@@ -112,6 +112,9 @@ def create_app_layout(
     historical_map,
     initial_records=None,
     initial_rows=None,
+    auth_username=None,
+    auth_role=None,
+    csrf_token=None,
 ):
     """Build the complete application layout."""
 
@@ -128,6 +131,9 @@ def create_app_layout(
                 reference_map=reference_map,
                 historical_map=historical_map,
                 initial_rows=records,
+                auth_username=auth_username,
+                auth_role=auth_role,
+                csrf_token=csrf_token,
             ),
             *create_zoom_controls(),
 

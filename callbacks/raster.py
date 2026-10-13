@@ -11,14 +11,18 @@ raster in PostgreSQL and stores both identities in the Dash layer registry:
 """
 
 from pathlib import Path
+import hashlib
+import time
+from hmac import compare_digest, new as hmac_new
 
 import rasterio
 from dash import Input, Output, State, no_update
-from flask import send_file
+from flask import request, send_file
 
 from config import (
     APP_BASE_URL,
     GCP_CRS,
+    RASTER_SIGNING_KEY,
     TEMP_RASTER_DIR,
     TEMP_RASTER_TTL_HOURS,
     TITILER_URL,
@@ -129,7 +133,27 @@ def register_raster_routes(app):
 
     @app.server.route("/raster/<path:relative_path>")
     def serve_temp_raster(relative_path):
-        """Serve one temporary COG and refresh its TTL timestamp."""
+        """Serve one temporary COG to TiTiler using a capability token."""
+
+        expires = request.args.get("expires", "")
+        signature = request.args.get("signature", "")
+        try:
+            expires_at = int(expires)
+        except (TypeError, ValueError):
+            return ("Raster not found.", 404)
+
+        if not RASTER_SIGNING_KEY or not signature or expires_at < int(time.time()):
+            return ("Raster not found.", 404)
+
+        signed_payload = f"{relative_path}:{expires_at}".encode("utf-8")
+        expected_signature = hmac_new(
+            RASTER_SIGNING_KEY.encode("utf-8"),
+            signed_payload,
+            hashlib.sha256,
+        ).hexdigest()
+        if not compare_digest(signature, expected_signature):
+            # Do not disclose whether an unauthorised raster path exists.
+            return ("Raster not found.", 404)
 
         from maps.raster import (
             get_temp_raster_path,

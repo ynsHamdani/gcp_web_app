@@ -1,3 +1,6 @@
 titiler.application
 uvicorn
 dash-extensions
+Flask-Login
+Flask-WTF
+python-dotenv

@@ -27,12 +27,15 @@ from typing import Any
 
 import yaml
 
+from dotenv import load_dotenv
+
 
 # ---------------------------------------------------------------------------
 # Project paths
 # ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env", override=False)
 
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
@@ -64,10 +67,11 @@ TITILER_URL = os.getenv(
     "http://127.0.0.1:8000",
 ).rstrip("/")
 
-GCP_CRS = "EPSG:25832"
+# Authentication and TiTiler source URLs use independent secrets.
+SECRET_KEY = os.getenv("GCP_SECRET_KEY", "").strip()
+RASTER_SIGNING_KEY = os.getenv("RASTER_SIGNING_KEY", "").strip()
 
-# Temporary development identity until authentication is implemented.
-GCP_STUDENT_ID = os.getenv("GCP_STUDENT_ID", "")
+GCP_CRS = "EPSG:25832"
 
 TEMP_RASTER_TTL_HOURS = float(
     os.getenv("TEMP_RASTER_TTL_HOURS", "24")
@@ -141,22 +145,7 @@ def get_database_config() -> dict[str, Any]:
 
 
 
-DEV_USER_ID = load_yaml_config()["development"]["user_id"]
-
-def get_development_user_id() -> int:
-    config = load_yaml_config()
-    development = config.get("development", {})
-
-    if "user_id" not in development:
-        raise ValueError("config.yaml must contain development.user_id")
-
-    return int(development["user_id"])
-
-
-DEV_USER_ID = get_development_user_id()
-
-# Backward-compatible name used by callbacks/gcp.py
-GCP_STUDENT_ID = str(DEV_USER_ID)
+# The authenticated identity now comes from Flask-Login, not config.yaml.
 # ---------------------------------------------------------------------------
 # Required directories
 # ---------------------------------------------------------------------------

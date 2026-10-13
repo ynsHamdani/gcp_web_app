@@ -10,8 +10,5 @@ database:
   max_pool_size: 5
   pool_timeout_seconds: 10
 
-development:
-  # Must exist in users.user_id until authentication is implemented.
-  user_id: 1
 
 

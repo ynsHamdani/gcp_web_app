@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Historical Map GCP Collection</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f3f6fa; color: #172033; }
+    main { width: min(420px, calc(100vw - 32px)); background: #fff; border: 1px solid #dbe2ea; border-radius: 14px; padding: 30px; box-shadow: 0 12px 30px rgba(15, 23, 42, .08); }
+    h1 { font-size: 1.4rem; margin: 0 0 8px; }
+    .subtitle { color: #64748b; margin: 0 0 24px; font-size: .95rem; }
+    label { display: block; font-size: .9rem; font-weight: 600; margin: 16px 0 6px; }
+    input[type=text], input[type=password] { width: 100%; border: 1px solid #cbd5e1; border-radius: 7px; padding: 11px 12px; font: inherit; }
+    .remember { display: flex; align-items: center; gap: 8px; color: #475569; font-size: .9rem; margin: 16px 0; }
+    .remember label { display: inline; margin: 0; font-weight: 400; }
+    button { width: 100%; border: 0; border-radius: 7px; padding: 12px; background: #1d4ed8; color: white; font: inherit; font-weight: 650; cursor: pointer; }
+    .message { margin: 0 0 14px; padding: 10px 12px; border-radius: 7px; background: #fff1f2; color: #9f1239; font-size: .9rem; }
+    .field-error { color: #b91c1c; font-size: .82rem; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Historical Map GCP Collection</h1>
+    <p class="subtitle">Sign in to continue to the application.</p>
+
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <p class="message" role="alert">{{ message }}</p>
+    {% endfor %}
+
+    <form method="post" action="{{ url_for('auth.login', next=next_url) }}">
+      {{ form.hidden_tag() }}
+      <label for="identifier">Username or email</label>
+      {{ form.identifier(id="identifier", autocomplete="username", autofocus=true) }}
+      {% for error in form.identifier.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+
+      <label for="password">Password</label>
+      {{ form.password(id="password", autocomplete="current-password") }}
+      {% for error in form.password.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
+
+      <div class="remember">
+        {{ form.remember(id="remember") }}
+        <label for="remember">Remember me on this device</label>
+      </div>
+      {{ form.submit(class_="submit-button") }}
+    </form>
+  </main>
+</body>
+</html>
