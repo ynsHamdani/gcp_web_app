@@ -59,11 +59,10 @@ gcp_store = PostgresGCPStore(db_pool)
 reference_layer_store = PostgresLayerStore(db_pool)
 historical_layer_store = PostgresLayerStore(db_pool)
 
-initial_gcp_records = gcp_store.list()
-initial_gcp_rows = [
-    gcp_table_row(record)
-    for record in initial_gcp_records
-]
+# Initial rows are resolved per request in serve_layout(), after the
+# authenticated user is known. Never cache one student's GCPs globally.
+initial_gcp_records = []
+initial_gcp_rows = []
 
 atexit.register(close_db_pool)
 
@@ -86,6 +85,22 @@ def serve_layout():
         auth_username = None
         auth_role = None
         csrf_token = ""
+
+    # Load personal GCPs at request time. Admins use the separate
+    # administration interface, not the student GCP page.
+    initial_gcp_records = []
+    if (
+        has_request_context()
+        and current_user.is_authenticated
+        and auth_role == "student"
+    ):
+        initial_gcp_records = gcp_store.list_for_student(
+            int(current_user.get_id())
+        )
+    initial_gcp_rows = [
+        gcp_table_row(record)
+        for record in initial_gcp_records
+    ]
 
     return create_app_layout(
         reference_map=reference_map,

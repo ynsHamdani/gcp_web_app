@@ -26,6 +26,14 @@ class GCPStore(Protocol):
 
     def list(self) -> list[dict]: ...
 
+    def list_for_student(self, student_id: int) -> list[dict]: ...
+
+    def list_for_admin(
+        self,
+        student_id: int | None = None,
+        historical_layer_id: int | None = None,
+    ) -> list[dict]: ...
+
     def create(self, record: dict) -> dict: ...
 
     def get(self, gcp_id: str | int) -> dict | None: ...
@@ -98,6 +106,16 @@ class PostgresGCPStore:
                 if hasattr(recorded_at, "isoformat")
                 else str(recorded_at)
             ),
+            # These joined fields are None for legacy get() calls that
+            # use the unjoined query below. They are populated by list queries.
+            "student_username": row.get("student_username"),
+            "student_email": row.get("student_email"),
+            "reference_layer_name": row.get("reference_layer_name"),
+            "reference_layer_source_type": row.get("reference_layer_source_type"),
+            "reference_layer_sha256": row.get("reference_layer_sha256"),
+            "historical_layer_name": row.get("historical_layer_name"),
+            "historical_layer_source_type": row.get("historical_layer_source_type"),
+            "historical_layer_sha256": row.get("historical_layer_sha256"),
         }
 
     @staticmethod
@@ -123,20 +141,132 @@ class PostgresGCPStore:
             recorded_at
         """
 
-    def list(self) -> list[dict]:
+    @staticmethod
+    def _select_joined_columns() -> str:
+        """GCP attributes enriched with owner and layer metadata."""
+
+        return """
+            g.gcp_id AS gcp_id,
+            g.student_id AS student_id,
+            u.username AS student_username,
+            u.email AS student_email,
+            g.reference_layer_id AS reference_layer_id,
+            rl.layer_filename AS reference_layer_name,
+            rl.source_type AS reference_layer_source_type,
+            rl.sha256 AS reference_layer_sha256,
+            g.historical_layer_id AS historical_layer_id,
+            hl.layer_filename AS historical_layer_name,
+            hl.source_type AS historical_layer_source_type,
+            hl.sha256 AS historical_layer_sha256,
+            g.reference_x AS reference_x,
+            g.reference_y AS reference_y,
+            g.reference_lon AS reference_lon,
+            g.reference_lat AS reference_lat,
+            g.historical_pixel AS historical_pixel,
+            g.historical_line AS historical_line,
+            g.historical_x AS historical_x,
+            g.historical_y AS historical_y,
+            g.historical_lon AS historical_lon,
+            g.historical_lat AS historical_lat,
+            g.crs AS crs,
+            g.offset_m AS offset_m,
+            g.gcp_status AS gcp_status,
+            g.recorded_at AS recorded_at
+        """
+
+    def _list_joined(
+        self,
+        conditions: list[str] | None = None,
+        parameters: tuple[int, ...] = (),
+    ) -> list[dict]:
+        """Execute a parameterized query with owner and layer-name joins."""
+
+        where_clause = (
+            "WHERE " + " AND ".join(conditions)
+            if conditions
+            else ""
+        )
         sql = f"""
-            SELECT {self._select_columns()}
-            FROM gcps
-            ORDER BY gcp_id
+            SELECT {self._select_joined_columns()}
+            FROM gcps g
+            LEFT JOIN users u ON u.user_id = g.student_id
+            LEFT JOIN layers rl ON rl.layer_id = g.reference_layer_id
+            LEFT JOIN layers hl ON hl.layer_id = g.historical_layer_id
+            {where_clause}
+            ORDER BY g.historical_layer_id, g.gcp_id
         """
 
         with self.pool.connection() as conn:
             with conn.cursor(row_factory=True) as cur:
-                cur.execute(sql)
+                cur.execute(sql, parameters)
                 return [
                     self._row_to_record(row)
                     for row in cur.fetchall()
                 ]
+
+    def list(self) -> list[dict]:
+        """Return all GCPs with joined metadata for trusted internal callers.
+
+        User-facing student features should call ``list_for_student`` instead;
+        this unscoped method is retained for administrative/internal compatibility.
+        """
+
+        return self._list_joined()
+
+    def list_for_student(self, student_id: int) -> list[dict]:
+        """Return only GCPs owned by the given authenticated student ID."""
+
+        try:
+            owner_id = int(student_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("student_id must be a valid database user ID.") from exc
+        if owner_id <= 0:
+            raise ValueError("student_id must be a positive database user ID.")
+
+        return self._list_joined(
+            ["g.student_id = %s"],
+            (owner_id,),
+        )
+
+    def list_for_admin(
+        self,
+        student_id: int | None = None,
+        historical_layer_id: int | None = None,
+    ) -> list[dict]:
+        """Return GCPs for an admin view with optional owner/layer filters.
+
+        The caller must enforce that the requesting user has the admin role.
+        Query filters are parameterized and can be combined.
+        """
+
+        conditions: list[str] = []
+        parameters: list[int] = []
+
+        if student_id is not None:
+            try:
+                owner_id = int(student_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("student_id must be a valid database user ID.") from exc
+            if owner_id <= 0:
+                raise ValueError("student_id must be a positive database user ID.")
+            conditions.append("g.student_id = %s")
+            parameters.append(owner_id)
+
+        if historical_layer_id is not None:
+            try:
+                layer_id = int(historical_layer_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "historical_layer_id must be a valid database layer ID."
+                ) from exc
+            if layer_id <= 0:
+                raise ValueError(
+                    "historical_layer_id must be a positive database layer ID."
+                )
+            conditions.append("g.historical_layer_id = %s")
+            parameters.append(layer_id)
+
+        return self._list_joined(conditions, tuple(parameters))
 
     def get(self, gcp_id: str | int) -> dict | None:
         db_id = self._db_id(gcp_id)

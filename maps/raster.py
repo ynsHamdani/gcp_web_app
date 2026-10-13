@@ -140,6 +140,29 @@ def _cog_path(raster_kind: str, sha256: str) -> Path:
     return _cache_dir(raster_kind, sha256) / f"{sha256}.tif"
 
 
+
+def get_cached_raster_path(
+    raster_kind: str,
+    sha256: str | None,
+) -> Path | None:
+    """Return an existing cached COG, or None if it has expired/is missing.
+
+    ``raster_kind`` must be ``reference`` or ``historical``. Only a 64-digit
+    SHA-256 digest is accepted, so layer metadata cannot become a path traversal
+    vector. This function never creates directories or changes the cache TTL.
+    """
+
+    if raster_kind not in {"reference", "historical"}:
+        raise ValueError("raster_kind must be 'reference' or 'historical'.")
+
+    digest = str(sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
+
+    candidate = TEMP_RASTER_DIR / raster_kind / digest / f"{digest}.tif"
+    return candidate if candidate.is_file() else None
+
+
 def _touch_path(path: Path) -> None:
     """Update a file/directory access timestamp for TTL-based cleanup."""
 

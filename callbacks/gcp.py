@@ -441,7 +441,7 @@ def register_gcp_callbacks(app, store: GCPStore):
                     delete_disabled=True,
                 )
 
-            records = store.list()
+            records = store.list_for_student(int(current_user.get_id()))
 
             return (
                 None,
@@ -683,7 +683,7 @@ def register_gcp_callbacks(app, store: GCPStore):
                 )
 
                 saved = store.create(record)
-                records = store.list()
+                records = store.list_for_student(int(current_user.get_id()))
 
             except Exception as exc:
                 return _no_change_return(
