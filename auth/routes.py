@@ -88,13 +88,10 @@ def create_auth_blueprint(user_store) -> Blueprint:
     @blueprint.route("/admin", methods=["GET"])
     def admin():
         if not current_user.is_authenticated:
-            return redirect(url_for("auth.login", next="/admin"))
+            return redirect(url_for("auth.login", next="/admin/"))
         if current_user.role != "admin":
             abort(403)
-        return render_template(
-            "admin.html",
-            user=current_user,
-            csrf_token=generate_csrf(),
-        )
+        # The real administrator interface is the protected Dash sub-app.
+        return redirect("/admin/")
 
     return blueprint

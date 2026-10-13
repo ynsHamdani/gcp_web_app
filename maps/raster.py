@@ -163,6 +163,34 @@ def get_cached_raster_path(
     return candidate if candidate.is_file() else None
 
 
+
+def create_signed_raster_url(
+    cog_path: Path,
+    ttl_seconds: int = 24 * 60 * 60,
+) -> str:
+    """Create the short-lived HMAC URL consumed by the TiTiler raster route."""
+
+    if not RASTER_SIGNING_KEY or len(RASTER_SIGNING_KEY) < 32:
+        raise RuntimeError("RASTER_SIGNING_KEY is not configured.")
+    path = Path(cog_path).resolve()
+    root = TEMP_RASTER_DIR.resolve()
+    if root not in path.parents or not path.is_file():
+        raise ValueError("The raster path is outside the temporary raster cache or missing.")
+
+    relative_path = path.relative_to(root).as_posix()
+    expires_at = int(time.time()) + max(60, int(ttl_seconds))
+    payload = f"{relative_path}:{expires_at}".encode("utf-8")
+    signature = hmac_new(
+        RASTER_SIGNING_KEY.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+    return (
+        f"{APP_BASE_URL.rstrip('/')}/raster/{quote(relative_path, safe='/')}"
+        f"?expires={expires_at}&signature={signature}"
+    )
+
+
 def _touch_path(path: Path) -> None:
     """Update a file/directory access timestamp for TTL-based cleanup."""
 

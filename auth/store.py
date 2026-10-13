@@ -142,3 +142,101 @@ class AuthStore:
                 if row is None:
                     raise RuntimeError("User creation did not return a user ID.")
                 return int(row[0])
+
+    def list_users(self, role: str | None = None) -> list[dict]:
+        """List user metadata without exposing password hashes."""
+
+        role = (role or "").strip().lower() or None
+        if role is not None and role not in {"student", "admin"}:
+            raise ValueError("role must be 'student' or 'admin'.")
+        sql = """
+            SELECT user_id, username, email, user_role, is_active, created_at
+            FROM users
+        """
+        parameters = ()
+        if role is not None:
+            sql += " WHERE user_role = %s"
+            parameters = (role,)
+        sql += " ORDER BY user_role, username"
+        with self.pool.connection() as conn:
+            with conn.cursor(row_factory=True) as cur:
+                cur.execute(sql, parameters)
+                rows = cur.fetchall()
+        return [
+            {
+                "user_id": int(row["user_id"]),
+                "username": str(row["username"]),
+                "email": str(row["email"]),
+                "user_role": str(row["user_role"]),
+                "is_active": bool(row["is_active"]),
+                "created_at": (
+                    row["created_at"].isoformat()
+                    if hasattr(row["created_at"], "isoformat")
+                    else str(row["created_at"])
+                ),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _validate_student_profile(username: str, email: str) -> tuple[str, str]:
+        username = (username or "").strip()
+        email = (email or "").strip().lower()
+        if not username or len(username) > 100:
+            raise ValueError("Username must contain 1–100 characters.")
+        if not email or len(email) > 320 or "@" not in email:
+            raise ValueError("Provide a valid email address.")
+        return username, email
+
+    def update_student_profile(self, user_id: int, *, username: str, email: str) -> None:
+        """Update a student's username/email; never modify roles here."""
+
+        username, email = self._validate_student_profile(username, email)
+        sql = """
+            UPDATE users
+            SET username = %s, email = %s
+            WHERE user_id = %s AND user_role = 'student'
+            RETURNING user_id
+        """
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (username, email, int(user_id)))
+                row = cur.fetchone()
+        if row is None:
+            raise KeyError(f"Student account not found: {user_id}")
+
+    def reset_student_password(self, user_id: int, password: str) -> None:
+        """Replace a student's password with a fresh secure hash."""
+
+        if not password or len(password) < 12:
+            raise ValueError("Password must contain at least 12 characters.")
+        password_hash = generate_password_hash(password)
+        sql = """
+            UPDATE users
+            SET password_hash = %s
+            WHERE user_id = %s AND user_role = 'student'
+            RETURNING user_id
+        """
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (password_hash, int(user_id)))
+                row = cur.fetchone()
+        if row is None:
+            raise KeyError(f"Student account not found: {user_id}")
+
+    def set_student_active(self, user_id: int, is_active: bool) -> None:
+        """Deactivate/reactivate a student without deleting their GCP history."""
+
+        sql = """
+            UPDATE users
+            SET is_active = %s
+            WHERE user_id = %s AND user_role = 'student'
+            RETURNING user_id
+        """
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (bool(is_active), int(user_id)))
+                row = cur.fetchone()
+        if row is None:
+            raise KeyError(f"Student account not found: {user_id}")
+

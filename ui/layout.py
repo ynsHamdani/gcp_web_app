@@ -318,6 +318,18 @@ def create_layout(
                     ),
                 ],
             ),
+            html.Div(
+                children=[
+                    html.Button(
+                        "Export my GCPs (CSV)",
+                        id="student-export-gcps",
+                        n_clicks=0,
+                        className="secondary-button",
+                    ),
+                    dcc.Download(id="student-gcp-download"),
+                ],
+                style={"display": "flex", "justifyContent": "flex-end", "margin": "8px 0"},
+            ),
             create_gcp_controls(),
             html.Div(
                 className="table-section",

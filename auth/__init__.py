@@ -74,36 +74,41 @@ def init_auth(
 
     @server.before_request
     def require_authentication_and_role():
-        # Login/logout/admin routes enforce their own permissions.
         endpoint = request.endpoint or ""
         if endpoint.startswith("auth."):
             return None
 
-        # TiTiler fetches raster URLs server-to-server. The route validates a
-        # short-lived, path-scoped signature in callbacks/raster.py.
+        # TiTiler accesses signed raster capabilities server-to-server. The
+        # raster route verifies its HMAC signature and expiry separately.
         if request.path.startswith("/raster/"):
             return None
 
+        is_admin_path = request.path == "/admin" or request.path.startswith("/admin/")
+
         if not current_user.is_authenticated:
-            if request.path == "/" and request.method == "GET":
-                return redirect(url_for("auth.login", next="/"))
+            if request.method == "GET" and (request.path == "/" or is_admin_path):
+                target = "/admin/" if is_admin_path else "/"
+                return redirect(url_for("auth.login", next=target))
             abort(401)
 
-        if getattr(current_user, "role", None) not in {"student", "admin"}:
+        role = getattr(current_user, "role", None)
+        if role not in {"student", "admin"}:
             abort(403)
 
-        # Keep the student GCP Dash interface separate from the Admin page.
-        # A student may use Dash; an administrator is routed to /admin instead.
-        if current_user.role == "admin":
+        # Students can never access the Admin Dash page, its assets, or callbacks.
+        if role == "student" and is_admin_path:
+            abort(403)
+
+        # Administrators use /admin/; prevent them from calling the student Dash
+        # endpoints directly. /admin/_dash-* remains available to admins.
+        if role == "admin":
             if request.path == "/" and request.method == "GET":
-                return redirect(url_for("auth.admin"))
+                return redirect("/admin/")
             if request.path.startswith(("/_dash", "/assets/")):
                 abort(403)
 
-        # Dash sends state-changing callbacks as same-origin POST requests.
-        # Check Origin (or Referer as a fallback) instead of globally enabling
-        # Flask-WTF CSRF, which would otherwise reject Dash's callback protocol.
-        if request.method == "POST" and request.path.startswith("/_dash"):
+        is_dash_post = request.path.startswith("/_dash") or request.path.startswith("/admin/_dash")
+        if request.method == "POST" and is_dash_post:
             origin = request.headers.get("Origin")
             referer = request.headers.get("Referer")
             source = origin or referer

@@ -9,6 +9,8 @@ from flask_wtf.csrf import generate_csrf
 
 from auth import init_auth
 from auth.store import AuthStore
+from admin.dashboard import mount_admin_dashboard
+from callbacks.export import register_student_export_callbacks
 from callbacks.gcp import register_gcp_callbacks
 from callbacks.navigation import register_navigation_callbacks
 from callbacks.opacity import register_opacity_callbacks
@@ -127,6 +129,15 @@ register_raster_callbacks(app)
 register_navigation_callbacks(app)
 register_opacity_callbacks(app)
 register_gcp_callbacks(app, gcp_store)
+
+register_student_export_callbacks(app, gcp_store)
+
+admin_dash_app = mount_admin_dashboard(
+    server=app.server,
+    gcp_store=gcp_store,
+    layer_store=reference_layer_store,
+    auth_store=auth_store,
+)
 
 
 # =========================================================
