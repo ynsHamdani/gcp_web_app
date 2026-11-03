@@ -18,9 +18,9 @@ from maps.raster import (
 def build_admin_layer_state(layer_store) -> dict[str, Any]:
     """Return available overlays, historical filter options, and warnings.
 
-    PostgreSQL layer metadata is authoritative for the layer list. Uploaded
-    COGs are added to the map only if the temporary file still exists and
-    TiTiler metadata can be retrieved. Missing files never remove GCP rows.
+    PostgreSQL metadata is authoritative. Uploaded COGs appear as overlays only
+    when the cached file exists and TiTiler can read it. Missing files do not
+    remove GCP records or layer metadata.
     """
 
     layers = layer_store.list()
@@ -44,7 +44,7 @@ def build_admin_layer_state(layer_store) -> dict[str, Any]:
             label = filename if is_available else f"{filename} (raster unavailable)"
             historical_options.append({"label": label, "value": layer_id})
 
-        # OSM is already included as the basemap in the existing map factory.
+        # OpenStreetMap is included by the map factory and has no local COG.
         if source_type != "uploaded" or kind not in registries:
             continue
         if local_path is None:
@@ -83,37 +83,58 @@ def build_admin_layer_state(layer_store) -> dict[str, Any]:
                     "opacity": 0.75,
                 }
             )
-        except Exception:
-            # A locally present COG is not useful to the map if TiTiler cannot
-            # read it. Keep the metadata/GCPs and flag the layer as unavailable.
-            unavailable.append(f"{filename} (map service unavailable)")
+        except Exception as exc:
+            unavailable.append(f"{filename} (map service unavailable: {exc})")
 
     return {
         "reference_registry": registries["reference"],
         "historical_registry": registries["historical"],
         "historical_options": historical_options,
         "unavailable_layers": unavailable,
-        "all_layers": layers,
     }
 
 
-def install_registry_on_map(map_component, registry: list[dict], layer_kind: str):
-    """Populate an existing synchronized map's layer control from the registry."""
+def build_admin_layer_control_children(
+    registry: list[dict] | None,
+    layer_kind: str,
+    selected_db_layer_ids: list[str] | set[str] | tuple[str, ...] | None = None,
+):
+    """Build a layer control with all rasters available and only selected ones on.
+
+    The OSM base layer remains checked. Uploaded layers stay accessible from
+    the control, but only the selected/most relevant overlay is enabled, which
+    avoids stacking unrelated historical or reference images.
+    """
+
+    if layer_kind not in {"reference", "historical"}:
+        raise ValueError("layer_kind must be 'reference' or 'historical'.")
+
+    registry = registry or []
+    selected = {str(value) for value in (selected_db_layer_ids or [])}
+    children = build_layer_children(registry, f"{layer_kind}-raster-layer")
+
+    # The first child is the OpenStreetMap base layer.
+    for item, overlay in zip(registry, children[1:]):
+        overlay.checked = str(item.get("db_layer_id", "")) in selected
+
+    return children
+
+
+def install_registry_on_map(
+    map_component,
+    registry: list[dict],
+    layer_kind: str,
+    selected_db_layer_ids: list[str] | set[str] | tuple[str, ...] | None = None,
+):
+    """Populate a synchronized map's layer control from available registry entries."""
 
     control_id = f"{layer_kind}-layer-control"
     for child in map_component.children or []:
         if getattr(child, "id", None) == control_id:
-            overlays = build_layer_children(
+            child.children = build_admin_layer_control_children(
                 registry,
-                f"{layer_kind}-raster-layer",
+                layer_kind,
+                selected_db_layer_ids,
             )
-            # Keep the basemap on and enable only one uploaded raster by default.
-            # Other available overlays remain selectable in the layer control.
-            raster_overlays = overlays[1:]
-            for overlay in raster_overlays:
-                overlay.checked = False
-            if raster_overlays:
-                raster_overlays[-1].checked = True
-            child.children = overlays
             break
     return map_component

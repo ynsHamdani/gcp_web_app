@@ -110,6 +110,7 @@ class PostgresGCPStore:
             # use the unjoined query below. They are populated by list queries.
             "student_username": row.get("student_username"),
             "student_email": row.get("student_email"),
+            "contributor_role": row.get("contributor_role"),
             "reference_layer_name": row.get("reference_layer_name"),
             "reference_layer_source_type": row.get("reference_layer_source_type"),
             "reference_layer_sha256": row.get("reference_layer_sha256"),
@@ -150,6 +151,7 @@ class PostgresGCPStore:
             g.student_id AS student_id,
             u.username AS student_username,
             u.email AS student_email,
+            u.user_role AS contributor_role,
             g.reference_layer_id AS reference_layer_id,
             rl.layer_filename AS reference_layer_name,
             rl.source_type AS reference_layer_source_type,
