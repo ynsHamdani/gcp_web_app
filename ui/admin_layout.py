@@ -4,15 +4,17 @@ from dash import dcc, html
 import dash_ag_grid as dag
 
 from maps.admin_gcp import build_admin_gcp_row
+from services.admin_layer_summary import summarize_unavailable_layers
 
 
 _BASE_BUTTON = {
-    "padding": "8px 12px",
+    "padding": "7px 10px",
     "border": "1px solid #cbd5e1",
     "borderRadius": "7px",
     "background": "#ffffff",
     "cursor": "pointer",
-    "fontSize": "13px",
+    "fontSize": "12px",
+    "whiteSpace": "nowrap",
 }
 _PRIMARY_BUTTON = {
     **_BASE_BUTTON,
@@ -26,6 +28,39 @@ _DANGER_BUTTON = {
     "border": "1px solid #fecaca",
 }
 _DISABLED_BUTTON = {**_BASE_BUTTON, "opacity": 0.55, "cursor": "not-allowed"}
+
+
+def _unavailable_note(unavailable: list[str] | None):
+    summary = summarize_unavailable_layers(unavailable)
+    if summary["total"] == 0:
+        return html.Span(
+            "All registered uploaded rasters are currently available.",
+            style={"fontSize": "11px", "color": "#166534"},
+        )
+    detail_groups = []
+    for kind, label in (("reference", "Reference"), ("historical", "Historical"), ("other", "Other")):
+        values = summary["groups"].get(kind, [])
+        if values:
+            detail_groups.append(
+                html.Div(
+                    [
+                        html.Strong(f"{label} ({len(values)})"),
+                        html.Ul([html.Li(value) for value in values]),
+                    ],
+                    style={"fontSize": "11px", "color": "#7c2d12"},
+                )
+            )
+    return html.Details(
+        [
+            html.Summary(
+                f"{summary['total']} unavailable raster(s) · {summary['reference']} reference · {summary['historical']} historical",
+                style={"cursor": "pointer", "fontSize": "11px", "fontWeight": "600", "color": "#92400e"},
+            ),
+            html.Div(detail_groups, style={"padding": "6px 4px 0"}),
+        ],
+        open=False,
+        style={"marginTop": "7px"},
+    )
 
 
 def create_admin_layout(
@@ -44,7 +79,7 @@ def create_admin_layout(
     csrf_token: str = "",
     admin_username: str = "Administrator",
 ):
-    """Build the administrator GCP workspace with layer management/collection."""
+    """Build a compact workspace with explicit load/zoom/activate controls."""
 
     records = records or []
     layer_state = layer_state or {}
@@ -66,17 +101,11 @@ def create_admin_layout(
         {"field": "status", "headerName": "Status", "width": 100},
         {"field": "recorded_at", "headerName": "Recorded", "width": 180},
     ]
-
     table = dag.AgGrid(
         id="admin-gcp-table",
         rowData=[build_admin_gcp_row(record) for record in records],
         columnDefs=table_columns,
-        defaultColDef={
-            "sortable": True,
-            "filter": True,
-            "resizable": True,
-            "minWidth": 90,
-        },
+        defaultColDef={"sortable": True, "filter": True, "resizable": True, "minWidth": 90},
         dashGridOptions={
             "animateRows": False,
             "rowSelection": {"mode": "singleRow"},
@@ -90,64 +119,80 @@ def create_admin_layout(
         "border": "1px solid #dbe2ea",
         "borderRadius": "10px",
         "background": "#ffffff",
-        "padding": "12px",
+        "padding": "10px",
     }
-    map_style = {"height": "350px", "width": "100%"}
     field_label = {"fontWeight": "600", "fontSize": "12px", "display": "block", "marginBottom": "5px"}
-    muted = {"fontSize": "12px", "color": "#64748b"}
+    muted = {"fontSize": "11px", "color": "#64748b"}
+    panel_style = {
+        "background": "#f8fafc",
+        "border": "1px solid #e2e8f0",
+        "borderRadius": "8px",
+        "padding": "10px",
+        "minWidth": "0",
+    }
     upload_box = {
         "border": "1px dashed #94a3b8",
         "borderRadius": "8px",
-        "padding": "13px",
-        "background": "#f8fafc",
+        "padding": "9px",
+        "background": "#ffffff",
         "textAlign": "center",
         "fontSize": "12px",
         "color": "#334155",
         "cursor": "pointer",
     }
-
-    collection_ready = bool(selected_reference_layer_id and selected_historical_layer_id)
+    initial_loaded = {
+        "reference_loaded_db_layer_id": str(selected_reference_layer_id) if selected_reference_layer_id else None,
+        "historical_loaded_db_layer_id": str(selected_historical_layer_id) if selected_historical_layer_id else None,
+        # Layers can appear at page load, but are not active for collection
+        # until the administrator explicitly presses the relevant Zoom button.
+        "reference_db_layer_id": None,
+        "historical_db_layer_id": None,
+    }
 
     return html.Div(
         className="app-container admin-container",
         style={
             "maxWidth": "1800px",
             "margin": "0 auto",
-            "padding": "12px 18px 24px",
+            "padding": "8px 16px 18px",
             "background": "#f5f7fb",
             "minHeight": "100vh",
             "boxSizing": "border-box",
         },
         children=[
             html.Header(
+                id="admin-workspace-header",
                 style={
+                    "position": "sticky",
+                    "top": "0",
+                    "zIndex": "1000",
                     "display": "flex",
                     "alignItems": "center",
                     "justifyContent": "space-between",
-                    "gap": "16px",
+                    "gap": "12px",
                     "flexWrap": "wrap",
-                    "padding": "8px 2px 12px",
+                    "padding": "7px 4px",
+                    "background": "rgba(245,247,251,0.97)",
+                    "backdropFilter": "blur(8px)",
+                    "borderBottom": "1px solid #e2e8f0",
                 },
                 children=[
                     html.Div(
-                        children=[
-                            html.H2("GCP Workspace", style={"margin": "0", "fontSize": "22px", "color": "#172033"}),
-                            html.Div(
-                                f"Signed in as {admin_username} · Administrator",
-                                style={"fontSize": "12px", "color": "#64748b", "marginTop": "3px"},
-                            ),
+                        [
+                            html.H2("GCP Workspace", style={"margin": "0", "fontSize": "20px", "color": "#172033"}),
+                            html.Div(f"Signed in as {admin_username} · Administrator", style=muted),
                         ]
                     ),
                     html.Div(
-                        style={"display": "flex", "alignItems": "center", "gap": "15px", "flexWrap": "wrap"},
+                        style={"display": "flex", "alignItems": "center", "gap": "12px", "flexWrap": "wrap"},
                         children=[
                             html.Nav(
-                                style={"display": "flex", "gap": "14px", "fontSize": "13px", "flexWrap": "wrap"},
+                                style={"display": "flex", "gap": "5px", "flexWrap": "wrap"},
                                 children=[
-                                    html.A("Add a GCP", href="#admin-add-gcp-panel", style={"color": "#1d4ed8", "fontWeight": "600"}),
-                                    html.A("Filter GCPs", href="#admin-filter-panel", style={"color": "#334155"}),
-                                    html.A("Maps", href="#admin-maps", style={"color": "#334155"}),
-                                    html.A("GCP records", href="#admin-records", style={"color": "#334155"}),
+                                    html.Button("Add a GCP", **{"data-admin-nav": "admin-add-gcp-panel", "className": "admin-nav-link is-active", "type": "button"}, style=_BASE_BUTTON),
+                                    html.Button("Filter GCPs", **{"data-admin-nav": "admin-filter-panel", "className": "admin-nav-link", "type": "button"}, style=_BASE_BUTTON),
+                                    html.Button("Maps", **{"data-admin-nav": "admin-maps", "className": "admin-nav-link", "type": "button"}, style=_BASE_BUTTON),
+                                    html.Button("GCP records", **{"data-admin-nav": "admin-records", "className": "admin-nav-link", "type": "button"}, style=_BASE_BUTTON),
                                 ],
                             ),
                             html.Form(
@@ -164,177 +209,159 @@ def create_admin_layout(
                 ],
             ),
 
-            # Step 2: choose shared layers or upload new GeoTIFFs.
+            # Layer manager is the main starting point. Existing layers and
+            # upload controls are grouped here; upload is collapsed by default.
             html.Section(
                 id="admin-add-gcp-panel",
-                style={**card_style, "marginBottom": "12px"},
+                style={**card_style, "marginTop": "10px", "marginBottom": "10px", "scrollMarginTop": "75px"},
                 children=[
                     html.Div(
-                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "baseline", "gap": "12px", "flexWrap": "wrap"},
+                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "gap": "10px", "flexWrap": "wrap", "marginBottom": "8px"},
                         children=[
-                            html.H3("Add a GCP", style={"margin": "0", "fontSize": "17px", "color": "#172033"}),
-                            html.Span("Select a reference and historical layer before collecting points", style=muted),
+                            html.H3("Add a GCP · Layer manager", style={"margin": "0", "fontSize": "15px", "color": "#172033"}),
+                            html.Span("Select → Load → Zoom to activate for collection", style=muted),
                         ],
                     ),
                     html.Div(
-                        style={"display": "grid", "gridTemplateColumns": "minmax(300px, 1.1fr) minmax(300px, 1fr)", "gap": "14px", "marginTop": "12px"},
+                        style={"display": "grid", "gridTemplateColumns": "repeat(2, minmax(260px, 1fr))", "gap": "10px"},
                         children=[
                             html.Div(
-                                style={"background": "#f8fafc", "border": "1px solid #e2e8f0", "borderRadius": "8px", "padding": "12px", "minWidth": "0"},
+                                style=panel_style,
                                 children=[
-                                    html.Div("Option A · Use existing layers", style={"fontWeight": "700", "fontSize": "13px", "marginBottom": "4px"}),
-                                    html.Div("Recommended. Only available rasters are listed; OpenStreetMap is also available as a reference basemap.", style=muted),
-                                    html.Div(
-                                        style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px", "marginTop": "10px"},
-                                        children=[
-                                            html.Div(
-                                                children=[
-                                                    html.Label("Select reference layer", style=field_label),
-                                                    dcc.Dropdown(
-                                                        id="admin-reference-existing-select",
-                                                        options=reference_layer_options,
-                                                        value=selected_reference_layer_id,
-                                                        searchable=True,
-                                                        clearable=True,
-                                                        placeholder="Choose a reference layer",
-                                                    ),
-                                                ]
-                                            ),
-                                            html.Div(
-                                                children=[
-                                                    html.Label("Select historical layer", style=field_label),
-                                                    dcc.Dropdown(
-                                                        id="admin-historical-existing-select",
-                                                        options=historical_available_options,
-                                                        value=selected_historical_layer_id,
-                                                        searchable=True,
-                                                        clearable=True,
-                                                        placeholder="Choose a historical layer",
-                                                    ),
-                                                ]
-                                            ),
-                                        ],
+                                    html.Div("Option A · Reference layer", style={"fontWeight": "700", "fontSize": "12px", "marginBottom": "6px"}),
+                                    html.Label("Select reference layer", style=field_label),
+                                    dcc.Dropdown(
+                                        id="admin-reference-existing-select",
+                                        options=reference_layer_options,
+                                        value=selected_reference_layer_id,
+                                        searchable=True,
+                                        clearable=False,
+                                        placeholder="Choose an available reference layer",
                                     ),
                                     html.Div(
-                                        style={"display": "flex", "alignItems": "center", "gap": "10px", "marginTop": "10px", "flexWrap": "wrap"},
+                                        style={"display": "flex", "gap": "6px", "flexWrap": "wrap", "marginTop": "7px"},
                                         children=[
-                                            html.Button("Load selected layers", id="admin-load-selected-layers", n_clicks=0, style=_PRIMARY_BUTTON),
-                                            html.Span(id="admin-layer-load-status", children="Available layers are ready to select.", style=muted),
+                                            html.Button("Load reference", id="admin-load-reference-layer", n_clicks=0, style=_PRIMARY_BUTTON),
+                                            html.Button("Zoom reference", id="admin-zoom-reference-layer", n_clicks=0, style=_BASE_BUTTON),
                                         ],
                                     ),
+                                    html.Div(id="admin-reference-layer-indicator", children=("Loaded · press Zoom to activate for GCP collection" if selected_reference_layer_id else "No available reference layer selected"), style={**muted, "marginTop": "6px"}),
                                 ],
                             ),
                             html.Div(
-                                style={"background": "#f8fafc", "border": "1px solid #e2e8f0", "borderRadius": "8px", "padding": "12px", "minWidth": "0"},
+                                style=panel_style,
                                 children=[
-                                    html.Div("Option B · Upload new layers", style={"fontWeight": "700", "fontSize": "13px", "marginBottom": "4px"}),
-                                    html.Div("Upload a reference GeoTIFF, a historical GeoTIFF, or both. Files go through the existing COG conversion and registration pipeline.", style=muted),
-                                    html.Div(
-                                        style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "10px", "marginTop": "10px"},
-                                        children=[
-                                            html.Div(
-                                                children=[
-                                                    html.Label("Reference GeoTIFF", style=field_label),
-                                                    dcc.Upload(
-                                                        id="admin-reference-upload",
-                                                        children=html.Div("Choose or drop reference .tif/.tiff", style=upload_box),
-                                                        accept=".tif,.tiff,image/tiff",
-                                                        multiple=False,
-                                                    ),
-                                                ]
-                                            ),
-                                            html.Div(
-                                                children=[
-                                                    html.Label("Historical GeoTIFF", style=field_label),
-                                                    dcc.Upload(
-                                                        id="admin-historical-upload",
-                                                        children=html.Div("Choose or drop historical .tif/.tiff", style=upload_box),
-                                                        accept=".tif,.tiff,image/tiff",
-                                                        multiple=False,
-                                                    ),
-                                                ]
-                                            ),
-                                        ],
+                                    html.Div("Option A · Historical layer", style={"fontWeight": "700", "fontSize": "12px", "marginBottom": "6px"}),
+                                    html.Label("Select historical layer", style=field_label),
+                                    dcc.Dropdown(
+                                        id="admin-historical-existing-select",
+                                        options=historical_available_options,
+                                        value=selected_historical_layer_id,
+                                        searchable=True,
+                                        clearable=False,
+                                        placeholder="Choose an available historical layer",
                                     ),
                                     html.Div(
-                                        style={"display": "flex", "alignItems": "center", "gap": "10px", "marginTop": "10px", "flexWrap": "wrap"},
+                                        style={"display": "flex", "gap": "6px", "flexWrap": "wrap", "marginTop": "7px"},
                                         children=[
-                                            html.Button("Upload selected file(s)", id="admin-upload-layers", n_clicks=0, style=_BASE_BUTTON),
-                                            html.Span(id="admin-upload-status", children="No new files selected.", style=muted),
+                                            html.Button("Load historical", id="admin-load-historical-layer", n_clicks=0, style=_PRIMARY_BUTTON),
+                                            html.Button("Zoom historical", id="admin-zoom-historical-layer", n_clicks=0, style=_BASE_BUTTON),
                                         ],
                                     ),
+                                    html.Div(id="admin-historical-layer-indicator", children=("Loaded · press Zoom to activate for GCP collection" if selected_historical_layer_id else "No available historical layer selected"), style={**muted, "marginTop": "6px"}),
                                 ],
                             ),
                         ],
                     ),
-                    html.Div(
-                        id="admin-unavailable-layer-note",
-                        children=("Unavailable layers are retained in the database but are not offered for loading: " + "; ".join(unavailable_layers)) if unavailable_layers else "",
-                        style={"fontSize": "11px", "color": "#92400e", "marginTop": "9px"},
+                    html.Details(
+                        style={**panel_style, "marginTop": "8px"},
+                        open=False,
+                        children=[
+                            html.Summary("Option B · Upload new GeoTIFF layers", style={"fontWeight": "700", "fontSize": "12px", "cursor": "pointer"}),
+                            html.Div("Upload a reference GeoTIFF, a historical GeoTIFF, or both. Files use the existing COG conversion and registration pipeline.", style={**muted, "margin": "6px 0 8px"}),
+                            html.Div(
+                                style={"display": "grid", "gridTemplateColumns": "repeat(2, minmax(220px, 1fr))", "gap": "10px"},
+                                children=[
+                                    html.Div(
+                                        [
+                                            html.Label("Reference GeoTIFF", style=field_label),
+                                            dcc.Upload(
+                                                id="admin-reference-upload",
+                                                children=html.Div([html.Div("Choose or drop reference .tif/.tiff"), html.Div(id="admin-reference-upload-filename", children="No file selected", style={"fontSize": "11px", "color": "#64748b", "marginTop": "4px"})], style=upload_box),
+                                                accept=".tif,.tiff,image/tiff",
+                                                multiple=False,
+                                            ),
+                                        ]
+                                    ),
+                                    html.Div(
+                                        [
+                                            html.Label("Historical GeoTIFF", style=field_label),
+                                            dcc.Upload(
+                                                id="admin-historical-upload",
+                                                children=html.Div([html.Div("Choose or drop historical .tif/.tiff"), html.Div(id="admin-historical-upload-filename", children="No file selected", style={"fontSize": "11px", "color": "#64748b", "marginTop": "4px"})], style=upload_box),
+                                                accept=".tif,.tiff,image/tiff",
+                                                multiple=False,
+                                            ),
+                                        ]
+                                    ),
+                                ],
+                            ),
+                            html.Div(
+                                style={"display": "flex", "alignItems": "center", "gap": "8px", "flexWrap": "wrap", "marginTop": "8px"},
+                                children=[
+                                    html.Button("Upload selected file(s)", id="admin-upload-layers", n_clicks=0, style=_BASE_BUTTON),
+                                    html.Span(id="admin-upload-status", children="No new files selected.", style=muted),
+                                ],
+                            ),
+                        ],
                     ),
+                    html.Div(id="admin-layer-load-status", children="Load each selected layer, then use its Zoom button to activate it for GCP collection.", role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "7px"}),
+                    html.Div(id="admin-unavailable-layer-note", children=_unavailable_note(unavailable_layers)),
                 ],
             ),
 
-            # GCP placement and confirmation controls.
             html.Section(
-                style={**card_style, "marginBottom": "12px"},
+                style={**card_style, "marginBottom": "10px"},
                 children=[
                     html.Div(
-                        style={"display": "flex", "alignItems": "center", "gap": "8px", "flexWrap": "wrap"},
+                        style={"display": "flex", "alignItems": "center", "gap": "7px", "flexWrap": "wrap"},
                         children=[
-                            html.Strong("Collection tools", style={"fontSize": "13px"}),
-                            html.Button("Add GCP", id="admin-add-gcp-button", n_clicks=0, disabled=not collection_ready, style=_PRIMARY_BUTTON if collection_ready else _DISABLED_BUTTON),
+                            html.Strong("Collection", style={"fontSize": "12px"}),
+                            html.Button("Add GCP", id="admin-add-gcp-button", n_clicks=0, disabled=True, style=_DISABLED_BUTTON),
                             html.Button("Confirm GCP", id="admin-confirm-gcp-button", n_clicks=0, disabled=True, style=_BASE_BUTTON),
                             html.Button("Cancel", id="admin-cancel-gcp-button", n_clicks=0, disabled=True, style=_BASE_BUTTON),
-                            html.Span("Click the reference map, then drag the historical marker to refine its position.", style=muted),
+                            html.Span("Click reference map; drag the historical marker to refine.", style=muted),
                         ],
                     ),
-                    html.Div(
-                        id="admin-gcp-collection-status",
-                        children=("Choose and load both layers to enable GCP collection." if not collection_ready else "Layers loaded. Click Add GCP to start collecting."),
-                        role="status",
-                        style={"fontSize": "12px", "color": "#334155", "marginTop": "8px"},
-                    ),
+                    html.Div(id="admin-gcp-collection-status", children="Activate one reference and one historical layer with their Zoom buttons to enable collection.", role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "6px"}),
                 ],
             ),
 
-            html.Section(
+            html.Details(
                 id="admin-filter-panel",
-                style={**card_style, "marginBottom": "12px"},
+                open=False,
+                style={**card_style, "marginBottom": "10px", "scrollMarginTop": "75px"},
                 children=[
+                    html.Summary("Filter GCPs", style={"fontSize": "13px", "fontWeight": "700", "cursor": "pointer"}),
                     html.Div(
-                        style={"display": "grid", "gridTemplateColumns": "minmax(220px, 1fr) minmax(220px, 1fr) auto", "gap": "12px", "alignItems": "end"},
+                        style={"display": "grid", "gridTemplateColumns": "minmax(220px, 1fr) minmax(220px, 1fr) auto", "gap": "10px", "alignItems": "end", "marginTop": "9px"},
                         children=[
                             html.Div(
-                                children=[
+                                [
                                     html.Label("Contributor", style=field_label),
-                                    dcc.Dropdown(
-                                        id="admin-contributor-filter",
-                                        options=[{"label": "All contributors", "value": "all"}, *contributor_options],
-                                        value="all",
-                                        clearable=False,
-                                        searchable=True,
-                                        placeholder="Select a student or administrator",
-                                    ),
+                                    dcc.Dropdown(id="admin-contributor-filter", options=[{"label": "All contributors", "value": "all"}, *contributor_options], value="all", clearable=False, searchable=True, placeholder="Select student or administrator"),
                                 ]
                             ),
                             html.Div(
-                                children=[
+                                [
                                     html.Label("Historical layer", style=field_label),
-                                    dcc.Dropdown(
-                                        id="admin-historical-filter",
-                                        options=[{"label": "All historical layers", "value": "all"}, *historical_options],
-                                        value="all",
-                                        clearable=False,
-                                        searchable=True,
-                                        placeholder="Select a historical layer",
-                                    ),
+                                    dcc.Dropdown(id="admin-historical-filter", options=[{"label": "All historical layers", "value": "all"}, *historical_options], value="all", clearable=False, searchable=True, placeholder="Select a historical layer"),
                                 ]
                             ),
                             html.Div(
-                                style={"display": "flex", "gap": "7px", "flexWrap": "wrap"},
+                                style={"display": "flex", "gap": "6px", "flexWrap": "wrap"},
                                 children=[
-                                    html.Button("Apply filters", id="admin-apply-filter", n_clicks=0, style=_PRIMARY_BUTTON),
+                                    html.Button("Apply", id="admin-apply-filter", n_clicks=0, style=_PRIMARY_BUTTON),
                                     html.Button("Refresh", id="admin-refresh", n_clicks=0, style=_BASE_BUTTON),
                                     html.Button("Delete selected", id="admin-delete-gcp", n_clicks=0, style=_DANGER_BUTTON),
                                     html.Button("Export CSV", id="admin-export-gcps", n_clicks=0, style=_BASE_BUTTON),
@@ -343,51 +370,60 @@ def create_admin_layout(
                             ),
                         ],
                     ),
-                    html.Div(id="admin-gcp-status", children=f"Loaded {len(records)} GCP(s).", role="status", style={"fontSize": "12px", "color": "#334155", "marginTop": "9px"}),
-                    html.Div(
-                        id="admin-raster-status",
-                        children=("Unavailable raster(s): " + "; ".join(unavailable_layers)) if unavailable_layers else "All registered raster files and map services are available.",
-                        role="status",
-                        style={"fontSize": "12px", "color": "#92400e" if unavailable_layers else "#166534", "marginTop": "4px"},
-                    ),
+                    html.Div(id="admin-gcp-status", children=f"Loaded {len(records)} GCP(s).", role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "7px"}),
+                    html.Div(id="admin-raster-status", children="Raster availability is checked on Refresh.", role="status", style={"fontSize": "11px", "color": "#92400e", "marginTop": "4px"}),
                 ],
             ),
 
             html.Section(
                 id="admin-maps",
-                style={"display": "grid", "gridTemplateColumns": "repeat(2, minmax(0, 1fr))", "gap": "12px", "marginBottom": "12px"},
+                style={"display": "grid", "gridTemplateColumns": "repeat(2, minmax(0, 1fr))", "gap": "10px", "marginBottom": "10px", "scrollMarginTop": "75px"},
                 children=[
-                    html.Div(style=card_style, children=[html.H3("Reference map", style={"margin": "0 0 8px", "fontSize": "15px"}), html.Div(reference_map, style=map_style)]),
-                    html.Div(style=card_style, children=[html.H3("Historical map", style={"margin": "0 0 8px", "fontSize": "15px"}), html.Div(historical_map, style=map_style)]),
+                    html.Div(
+                        style=card_style,
+                        children=[
+                            html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "8px"}, children=[html.H3("Reference map", style={"margin": "0", "fontSize": "14px"}), html.Span("Reference overlay", style=muted)]),
+                            html.Div(
+                                style={"display": "flex", "alignItems": "center", "gap": "10px", "margin": "4px 0 7px"},
+                                children=[html.Label("Overlay opacity", style=muted), dcc.Slider(id="admin-reference-opacity", min=0, max=100, step=5, value=75, marks={0: "0%", 100: "100%"}, tooltip={"placement": "bottom", "always_visible": False})],
+                            ),
+                            html.Div(reference_map, style={"height": "350px", "width": "100%"}),
+                        ],
+                    ),
+                    html.Div(
+                        style=card_style,
+                        children=[
+                            html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "8px"}, children=[html.H3("Historical map", style={"margin": "0", "fontSize": "14px"}), html.Span("Historical overlay", style=muted)]),
+                            html.Div(
+                                style={"display": "flex", "alignItems": "center", "gap": "10px", "margin": "4px 0 7px"},
+                                children=[html.Label("Overlay opacity", style=muted), dcc.Slider(id="admin-historical-opacity", min=0, max=100, step=5, value=75, marks={0: "0%", 100: "100%"}, tooltip={"placement": "bottom", "always_visible": False})],
+                            ),
+                            html.Div(historical_map, style={"height": "350px", "width": "100%"}),
+                        ],
+                    ),
                 ],
             ),
 
-            html.Section(
+            html.Details(
                 id="admin-records",
-                style=card_style,
+                open=False,
+                style={**card_style, "scrollMarginTop": "75px"},
                 children=[
-                    html.Div(
-                        style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "10px", "marginBottom": "8px"},
-                        children=[
-                            html.H3("GCP records", style={"margin": "0", "fontSize": "15px"}),
-                            html.Span("Select a row to zoom both maps to that GCP", style=muted),
-                        ],
-                    ),
+                    html.Summary(f"GCP records · {len(records)} loaded", style={"fontSize": "13px", "fontWeight": "700", "cursor": "pointer"}),
+                    html.Div("Select a row to zoom both maps to that GCP and highlight its marker.", style={**muted, "margin": "7px 0"}),
                     table,
                 ],
             ),
 
-            # State shared by the Step 1 workspace and the Step 2 collection flow.
+            # State shared by layer actions, viewport dispatcher, Step 1 filters,
+            # and the administrator collection workflow.
             dcc.Store(id="admin-gcp-records", data=records),
             dcc.Store(id="admin-layer-state", data=layer_state),
             dcc.Store(id="admin-selection-layer-state", data=layer_state),
-            dcc.Store(
-                id="admin-loaded-layer-selection",
-                data={
-                    "reference_db_layer_id": str(selected_reference_layer_id) if selected_reference_layer_id else None,
-                    "historical_db_layer_id": str(selected_historical_layer_id) if selected_historical_layer_id else None,
-                },
-            ),
+            dcc.Store(id="admin-loaded-layer-selection", data=initial_loaded),
+            dcc.Store(id="admin-layer-viewport-request", data=None),
+            dcc.Store(id="admin-gcp-viewport-request", data=None),
+            dcc.Store(id="admin-viewport-applied", data=None),
             dcc.Store(id="admin-gcp-pending", data=None),
             dcc.Store(id="admin-gcp-collection-active", data=False),
             dcc.Store(id="admin-gcp-drag-event", data=None),

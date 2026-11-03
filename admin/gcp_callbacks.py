@@ -5,7 +5,6 @@ from flask import abort
 from flask_login import current_user
 
 from maps.admin_gcp import build_admin_gcp_geojson, build_admin_gcp_row
-from services.admin_layers import build_admin_layer_state
 from services.gcp_export import build_gcp_csv
 from services.layer_availability import annotate_gcp_raster_availability
 
@@ -51,22 +50,22 @@ def _historical_options(layer_state: dict) -> list[dict]:
 
 
 def _raster_status(layer_state: dict, historical_value) -> str:
+    """Return a short availability summary; names live in the expandable panel."""
     unavailable = list(layer_state.get("unavailable_layers") or [])
     if historical_value not in (None, "", "all"):
         selected = next(
-            (
-                item
-                for item in layer_state.get("historical_options", [])
-                if str(item.get("value")) == str(historical_value)
-            ),
+            (item for item in layer_state.get("historical_options", [])
+             if str(item.get("value")) == str(historical_value)),
             None,
         )
         if selected and "unavailable" in str(selected.get("label", "")).lower():
             if selected["label"] not in unavailable:
                 unavailable.append(selected["label"])
-
     if unavailable:
-        return "Unavailable raster(s): " + "; ".join(unavailable)
+        return (
+            f"{len(unavailable)} registered raster(s) unavailable. "
+            "Expand Layer availability in Add a GCP for details."
+        )
     return "All registered raster files and map services are available."
 
 
@@ -81,43 +80,32 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         Output("admin-gcp-status", "children"),
         Output("admin-raster-status", "children"),
         Output("admin-historical-filter", "options"),
-        Output("admin-layer-state", "data"),
         Input("admin-apply-filter", "n_clicks"),
-        Input("admin-refresh", "n_clicks"),
         Input("admin-delete-gcp", "n_clicks"),
         Input("admin-gcp-collection-revision", "data"),
+        Input("admin-layer-state", "data"),
         State("admin-contributor-filter", "value"),
         State("admin-historical-filter", "value"),
         State("admin-gcp-table", "selectedRows"),
-        State("admin-layer-state", "data"),
         prevent_initial_call=True,
     )
     def update_admin_gcp_view(
         apply_clicks,
-        refresh_clicks,
         delete_clicks,
         collection_revision,
+        layer_state,
         contributor_value,
         historical_value,
         selected_rows,
-        layer_state,
     ):
-        del apply_clicks, refresh_clicks, delete_clicks, collection_revision
+        del apply_clicks, delete_clicks, collection_revision
         _require_admin()
         triggered = ctx.triggered_id
         status_prefix = ""
         layer_state = layer_state or {}
 
-        if triggered == "admin-refresh" or not layer_state:
-            try:
-                # Recheck local COG availability and regenerate signed TiTiler URLs.
-                layer_state = build_admin_layer_state(layer_store)
-            except Exception as exc:
-                return (
-                    no_update, no_update, no_update, no_update,
-                    f"Refresh failed while checking raster layers: {exc}",
-                    no_update, no_update, no_update,
-                )
+        if not layer_state:
+            status_prefix = "Layer catalogue is not loaded yet. "
 
         if triggered == "admin-delete-gcp":
             selected_rows = selected_rows or []
@@ -145,10 +133,10 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
             return (
                 no_update, no_update, no_update, no_update,
                 f"Could not load filtered GCPs: {exc}",
-                no_update, no_update, layer_state,
+                no_update, no_update,
             )
 
-        if triggered == "admin-refresh":
+        if triggered == "admin-layer-state":
             status_prefix += "GCP records and raster availability refreshed. "
         elif triggered == "admin-apply-filter":
             status_prefix += "Filters applied. "
@@ -163,45 +151,22 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
             f"{status_prefix}Showing {len(records)} GCP(s).",
             _raster_status(layer_state, historical_value),
             _historical_options(layer_state),
-            layer_state,
         )
 
     @app.callback(
         Output("admin-reference-gcp-geojson", "hideout"),
         Output("admin-historical-gcp-geojson", "hideout"),
-        Output("reference-map", "center"),
-        Output("reference-map", "zoom"),
-        Output("historical-map", "center"),
-        Output("historical-map", "zoom"),
+        Output("admin-gcp-viewport-request", "data"),
         Input("admin-gcp-table", "selectedRows"),
-        Input("admin-loaded-layer-selection", "data"),
         State("admin-gcp-records", "data"),
-        State("admin-selection-layer-state", "data"),
         prevent_initial_call=True,
     )
-    def zoom_to_selected_gcp(selected_rows, loaded_selection, records, selection_layer_state):
+    def zoom_to_selected_gcp(selected_rows, records):
         _require_admin()
-        if ctx.triggered_id == "admin-loaded-layer-selection":
-            loaded_selection = loaded_selection or {}
-            layer_state = selection_layer_state or {}
-            historical_id = str(loaded_selection.get("historical_db_layer_id") or "")
-            historical_entry = next(
-                (
-                    item for item in (layer_state.get("historical_registry") or [])
-                    if str(item.get("db_layer_id")) == historical_id
-                ),
-                None,
-            )
-            if historical_entry and historical_entry.get("center"):
-                center = [float(v) for v in historical_entry["center"]]
-                zoom = int(historical_entry.get("zoom") or 10)
-                return no_update, no_update, center, zoom, center, zoom
-            return no_update, no_update, no_update, no_update, no_update, no_update
-
         selected_rows = selected_rows or []
         if not selected_rows:
             empty_hideout = {"selected_gcp_id": None}
-            return empty_hideout, empty_hideout, no_update, no_update, no_update, no_update
+            return empty_hideout, empty_hideout, no_update
 
         selected_id = str(selected_rows[0].get("gcp_id") or "")
         record = next(
@@ -210,21 +175,48 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         )
         if record is None:
             empty_hideout = {"selected_gcp_id": None}
-            return empty_hideout, empty_hideout, no_update, no_update, no_update, no_update
+            return empty_hideout, empty_hideout, no_update
 
         reference = record.get("reference") or {}
         historical = record.get("historical") or {}
         coordinates = (reference.get("lat"), reference.get("lon"), historical.get("lat"), historical.get("lon"))
         if any(value is None for value in coordinates):
             empty_hideout = {"selected_gcp_id": selected_id}
-            return empty_hideout, empty_hideout, no_update, no_update, no_update, no_update
+            return empty_hideout, empty_hideout, no_update
 
         center = [
             (float(reference["lat"]) + float(historical["lat"])) / 2.0,
             (float(reference["lon"]) + float(historical["lon"])) / 2.0,
         ]
         hideout = {"selected_gcp_id": selected_id}
-        return hideout, hideout, center, 18, center, 18
+        command = {"center": center, "zoom": 18, "request_id": f"gcp:{selected_id}"}
+        return hideout, hideout, command
+
+    # A single browser-side dispatcher applies all intentional map zooms.
+    # Layer buttons and GCP-row selection publish separate requests, avoiding
+    # duplicate Dash outputs and race conditions between the two zoom sources.
+    app.clientside_callback(
+        """
+        function(layerCommand, gcpCommand) {
+            const dash = window.dash_clientside;
+            if (!dash || !dash.callback_context) return null;
+            const triggered = dash.callback_context.triggered_id;
+            const command = triggered === "admin-layer-viewport-request"
+                ? layerCommand : gcpCommand;
+            if (!command || !Array.isArray(command.center)) {
+                return dash.no_update;
+            }
+            if (window.gcpMapSync && typeof window.gcpMapSync.setSynchronizedView === "function") {
+                window.gcpMapSync.setSynchronizedView(command.center, command.zoom);
+                return {request_id: command.request_id || null, applied: true};
+            }
+            return dash.no_update;
+        }
+        """,
+        Output("admin-viewport-applied", "data"),
+        Input("admin-layer-viewport-request", "data"),
+        Input("admin-gcp-viewport-request", "data"),
+    )
 
     @app.callback(
         Output("admin-gcp-table", "selectedRows"),
