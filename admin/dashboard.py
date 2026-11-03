@@ -7,7 +7,9 @@ from flask import has_request_context
 from flask_login import current_user
 from flask_wtf.csrf import generate_csrf
 
+from admin.collection_callbacks import register_admin_collection_callbacks
 from admin.gcp_callbacks import register_admin_gcp_callbacks
+from admin.layer_callbacks import register_admin_layer_callbacks
 from maps.admin_gcp import install_admin_gcp_layer
 from maps.map_views import create_historical_map, create_reference_map
 from services.admin_layers import build_admin_layer_state, install_registry_on_map
@@ -38,19 +40,28 @@ def _contributor_options(users: list[dict]) -> list[dict]:
     return options
 
 
-def _default_available_layer(records: list[dict], registry: list[dict], field: str):
-    """Choose one frequently referenced available layer for initial display."""
+def _default_available_layer(records: list[dict], registry: list[dict], field: str) -> str | None:
+    """Choose the available layer most often referenced by existing GCPs."""
 
-    available = {str(item.get("db_layer_id")) for item in registry}
+    available = {str(item.get("db_layer_id")) for item in registry or []}
     counts: dict[str, int] = {}
     for record in records:
         value = str(record.get(field) or "")
         if value in available:
             counts[value] = counts.get(value, 0) + 1
-    if not counts:
-        return []
-    best = max(counts, key=counts.get)
-    return [best]
+    return max(counts, key=counts.get) if counts else None
+
+
+def _empty_layer_state() -> dict:
+    return {
+        "reference_registry": [],
+        "historical_registry": [],
+        "reference_options": [],
+        "historical_options": [],
+        "available_historical_options": [],
+        "unavailable_layers": [],
+        "basemap_reference_layer_id": None,
+    }
 
 
 def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
@@ -74,7 +85,6 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
 
         if has_admin_session:
             records = annotate_gcp_raster_availability(gcp_store.list_for_admin())
-            # Include admins as GCP contributors, not only student accounts.
             users = auth_store.list_users()
             layer_state = build_admin_layer_state(layer_store)
             csrf_token = generate_csrf()
@@ -82,40 +92,42 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
         else:
             records = []
             users = []
-            layer_state = {
-                "reference_registry": [],
-                "historical_registry": [],
-                "historical_options": [],
-                "unavailable_layers": [],
-            }
+            layer_state = _empty_layer_state()
             csrf_token = ""
             admin_username = "Administrator"
 
         reference_map = create_reference_map()
         historical_map = create_historical_map()
 
-        reference_ids = _default_available_layer(
+        # Prefer a raster already used by existing GCPs. Otherwise, use the
+        # shared OSM basemap as the reference layer and the first available
+        # historical raster as a sensible starting point.
+        selected_reference_id = _default_available_layer(
             records,
             layer_state["reference_registry"],
             "reference_layer_id",
         )
-        historical_ids = _default_available_layer(
+        selected_reference_id = selected_reference_id or layer_state.get("basemap_reference_layer_id")
+
+        selected_historical_id = _default_available_layer(
             records,
             layer_state["historical_registry"],
             "historical_layer_id",
         )
+        if selected_historical_id is None and layer_state["historical_registry"]:
+            selected_historical_id = str(layer_state["historical_registry"][0]["db_layer_id"])
 
         install_registry_on_map(
             reference_map,
             layer_state["reference_registry"],
             "reference",
-            reference_ids,
+            [selected_reference_id] if selected_reference_id else [],
         )
         install_registry_on_map(
             historical_map,
             layer_state["historical_registry"],
             "historical",
-            historical_ids,
+            [selected_historical_id] if selected_historical_id else [],
         )
         install_admin_gcp_layer(reference_map, records, "reference")
         install_admin_gcp_layer(historical_map, records, "historical")
@@ -127,6 +139,10 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
             historical_options=layer_state["historical_options"],
             contributor_options=_contributor_options(users),
             layer_state=layer_state,
+            reference_layer_options=layer_state["reference_options"],
+            historical_available_options=layer_state["available_historical_options"],
+            selected_reference_layer_id=selected_reference_id,
+            selected_historical_layer_id=selected_historical_id,
             unavailable_layers=layer_state["unavailable_layers"],
             csrf_token=csrf_token,
             admin_username=admin_username,
@@ -134,4 +150,6 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
 
     admin_app.layout = serve_admin_layout
     register_admin_gcp_callbacks(admin_app, gcp_store, layer_store)
+    register_admin_layer_callbacks(admin_app, layer_store)
+    register_admin_collection_callbacks(admin_app, gcp_store)
     return admin_app

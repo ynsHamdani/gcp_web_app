@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-from collections import Counter
-
 from dash import Input, Output, State, ctx, dcc, no_update
 from flask import abort
 from flask_login import current_user
 
 from maps.admin_gcp import build_admin_gcp_geojson, build_admin_gcp_row
-from services.admin_layers import (
-    build_admin_layer_control_children,
-    build_admin_layer_state,
-)
+from services.admin_layers import build_admin_layer_state
 from services.gcp_export import build_gcp_csv
 from services.layer_availability import annotate_gcp_raster_availability
 
@@ -48,30 +43,6 @@ def _rows(records):
     return [build_admin_gcp_row(record) for record in records]
 
 
-def _preferred_layer_ids(
-    records: list[dict],
-    registry: list[dict],
-    record_field: str,
-    forced_layer_id: str | None = None,
-) -> list[str]:
-    """Choose one available overlay associated with the filtered GCPs."""
-
-    available = {str(item.get("db_layer_id")) for item in registry or []}
-    if forced_layer_id not in (None, "", "all"):
-        forced = str(forced_layer_id)
-        return [forced] if forced in available else []
-
-    counts = Counter(
-        str(record.get(record_field))
-        for record in records
-        if record.get(record_field) is not None
-        and str(record.get(record_field)) in available
-    )
-    for layer_id, _count in counts.most_common():
-        return [layer_id]
-    return []
-
-
 def _historical_options(layer_state: dict) -> list[dict]:
     return [
         {"label": "All historical layers", "value": "all"},
@@ -100,15 +71,13 @@ def _raster_status(layer_state: dict, historical_value) -> str:
 
 
 def register_admin_gcp_callbacks(app, gcp_store, layer_store):
-    """Register consistent admin filters, map refresh, selection, deletion, and export."""
+    """Register Step 1 filters/refresh/delete plus GCP-collection refresh."""
 
     @app.callback(
         Output("admin-gcp-table", "rowData"),
         Output("admin-gcp-records", "data"),
         Output("admin-reference-gcp-geojson", "data"),
         Output("admin-historical-gcp-geojson", "data"),
-        Output("reference-layer-control", "children"),
-        Output("historical-layer-control", "children"),
         Output("admin-gcp-status", "children"),
         Output("admin-raster-status", "children"),
         Output("admin-historical-filter", "options"),
@@ -116,6 +85,7 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         Input("admin-apply-filter", "n_clicks"),
         Input("admin-refresh", "n_clicks"),
         Input("admin-delete-gcp", "n_clicks"),
+        Input("admin-gcp-collection-revision", "data"),
         State("admin-contributor-filter", "value"),
         State("admin-historical-filter", "value"),
         State("admin-gcp-table", "selectedRows"),
@@ -126,12 +96,13 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         apply_clicks,
         refresh_clicks,
         delete_clicks,
+        collection_revision,
         contributor_value,
         historical_value,
         selected_rows,
         layer_state,
     ):
-        del apply_clicks, refresh_clicks, delete_clicks
+        del apply_clicks, refresh_clicks, delete_clicks, collection_revision
         _require_admin()
         triggered = ctx.triggered_id
         status_prefix = ""
@@ -139,12 +110,11 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
 
         if triggered == "admin-refresh" or not layer_state:
             try:
-                # Refresh regenerates signed TiTiler URLs and rechecks cache files.
+                # Recheck local COG availability and regenerate signed TiTiler URLs.
                 layer_state = build_admin_layer_state(layer_store)
             except Exception as exc:
                 return (
                     no_update, no_update, no_update, no_update,
-                    no_update, no_update,
                     f"Refresh failed while checking raster layers: {exc}",
                     no_update, no_update, no_update,
                 )
@@ -170,57 +140,26 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
                     status_prefix = f"Deletion failed: {exc}. "
 
         try:
-            records = _filtered_records(
-                gcp_store,
-                contributor_value,
-                historical_value,
-            )
+            records = _filtered_records(gcp_store, contributor_value, historical_value)
         except Exception as exc:
             return (
                 no_update, no_update, no_update, no_update,
-                no_update, no_update,
                 f"Could not load filtered GCPs: {exc}",
                 no_update, no_update, layer_state,
             )
-
-        reference_registry = layer_state.get("reference_registry") or []
-        historical_registry = layer_state.get("historical_registry") or []
-
-        reference_selected_ids = _preferred_layer_ids(
-            records,
-            reference_registry,
-            "reference_layer_id",
-        )
-        historical_selected_ids = _preferred_layer_ids(
-            records,
-            historical_registry,
-            "historical_layer_id",
-            forced_layer_id=historical_value,
-        )
-
-        reference_control = build_admin_layer_control_children(
-            reference_registry,
-            "reference",
-            reference_selected_ids,
-        )
-        historical_control = build_admin_layer_control_children(
-            historical_registry,
-            "historical",
-            historical_selected_ids,
-        )
 
         if triggered == "admin-refresh":
             status_prefix += "GCP records and raster availability refreshed. "
         elif triggered == "admin-apply-filter":
             status_prefix += "Filters applied. "
+        elif triggered == "admin-gcp-collection-revision":
+            status_prefix += "New administrator GCP saved; workspace refreshed. "
 
         return (
             _rows(records),
             records,
             build_admin_gcp_geojson(records, "reference"),
             build_admin_gcp_geojson(records, "historical"),
-            reference_control,
-            historical_control,
             f"{status_prefix}Showing {len(records)} GCP(s).",
             _raster_status(layer_state, historical_value),
             _historical_options(layer_state),
@@ -235,14 +174,32 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         Output("historical-map", "center"),
         Output("historical-map", "zoom"),
         Input("admin-gcp-table", "selectedRows"),
+        Input("admin-loaded-layer-selection", "data"),
         State("admin-gcp-records", "data"),
+        State("admin-selection-layer-state", "data"),
         prevent_initial_call=True,
     )
-    def zoom_to_selected_gcp(selected_rows, records):
+    def zoom_to_selected_gcp(selected_rows, loaded_selection, records, selection_layer_state):
         _require_admin()
+        if ctx.triggered_id == "admin-loaded-layer-selection":
+            loaded_selection = loaded_selection or {}
+            layer_state = selection_layer_state or {}
+            historical_id = str(loaded_selection.get("historical_db_layer_id") or "")
+            historical_entry = next(
+                (
+                    item for item in (layer_state.get("historical_registry") or [])
+                    if str(item.get("db_layer_id")) == historical_id
+                ),
+                None,
+            )
+            if historical_entry and historical_entry.get("center"):
+                center = [float(v) for v in historical_entry["center"]]
+                zoom = int(historical_entry.get("zoom") or 10)
+                return no_update, no_update, center, zoom, center, zoom
+            return no_update, no_update, no_update, no_update, no_update, no_update
+
         selected_rows = selected_rows or []
         if not selected_rows:
-            # Clear the highlight but leave the map viewport unchanged.
             empty_hideout = {"selected_gcp_id": None}
             return empty_hideout, empty_hideout, no_update, no_update, no_update, no_update
 
@@ -257,24 +214,17 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
 
         reference = record.get("reference") or {}
         historical = record.get("historical") or {}
-        coordinates = (
-            reference.get("lat"),
-            reference.get("lon"),
-            historical.get("lat"),
-            historical.get("lon"),
-        )
+        coordinates = (reference.get("lat"), reference.get("lon"), historical.get("lat"), historical.get("lon"))
         if any(value is None for value in coordinates):
             empty_hideout = {"selected_gcp_id": selected_id}
             return empty_hideout, empty_hideout, no_update, no_update, no_update, no_update
 
-        # Center both synchronized maps between the two corresponding GCP points.
         center = [
             (float(reference["lat"]) + float(historical["lat"])) / 2.0,
             (float(reference["lon"]) + float(historical["lon"])) / 2.0,
         ]
-        zoom = 18
         hideout = {"selected_gcp_id": selected_id}
-        return hideout, hideout, center, zoom, center, zoom
+        return hideout, hideout, center, 18, center, 18
 
     @app.callback(
         Output("admin-gcp-table", "selectedRows"),
@@ -282,8 +232,6 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         prevent_initial_call=True,
     )
     def clear_selection_after_data_refresh(_row_data):
-        # Filtering/refresh/deletion replaces rowData. Clear any stale selection
-        # so a deleted point cannot remain highlighted or be deleted twice.
         return []
 
     @app.callback(
@@ -296,9 +244,5 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
     def export_admin_gcps(n_clicks, contributor_value, historical_value):
         if not n_clicks:
             return no_update
-        records = _filtered_records(
-            gcp_store,
-            contributor_value,
-            historical_value,
-        )
+        records = _filtered_records(gcp_store, contributor_value, historical_value)
         return dcc.send_bytes(build_gcp_csv(records), "gcp_export.csv")
