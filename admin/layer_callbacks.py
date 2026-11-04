@@ -308,7 +308,11 @@ def register_admin_layer_callbacks(app, layer_store):
         # also invalidates an old active layer immediately after an upload has
         # selected a newly registered raster, before any follow-up callback.
         if str(selected_ref or "") != str(next_loaded.get("reference_db_layer_id") or ""):
-            next_loaded["reference_db_layer_id"] = None
+            if str(selected_ref or "") == str(state.get("basemap_reference_layer_id") or ""):
+                next_loaded["reference_loaded_db_layer_id"] = str(selected_ref)
+                next_loaded["reference_db_layer_id"] = str(selected_ref)
+            else:
+                next_loaded["reference_db_layer_id"] = None
         if str(selected_hist or "") != str(next_loaded.get("historical_db_layer_id") or ""):
             next_loaded["historical_db_layer_id"] = None
         viewport_request = no_update
@@ -323,9 +327,13 @@ def register_admin_layer_callbacks(app, layer_store):
             else:
                 changed = str(next_loaded["reference_loaded_db_layer_id"] or "") != str(reference_choice)
                 next_loaded["reference_loaded_db_layer_id"] = str(reference_choice)
-                if changed:
-                    next_loaded["reference_db_layer_id"] = None
-                layer_status = f"Loaded reference: {_layer_name(state, 'reference', reference_choice)}. Press Zoom to activate it for GCP collection."
+                if str(reference_choice) == str(state.get("basemap_reference_layer_id") or ""):
+                    next_loaded["reference_db_layer_id"] = str(reference_choice)
+                    layer_status = "OpenStreetMap is already loaded and active as the reference support. No zoom is required."
+                else:
+                    if changed:
+                        next_loaded["reference_db_layer_id"] = None
+                    layer_status = f"Loaded reference: {_layer_name(state, 'reference', reference_choice)}. Press Zoom to activate it for GCP collection."
         elif triggered == "admin-load-historical-layer":
             if not _option_exists(historical_options, historical_choice):
                 layer_status = "Choose an available historical layer first."
@@ -336,9 +344,16 @@ def register_admin_layer_callbacks(app, layer_store):
                     next_loaded["historical_db_layer_id"] = None
                 layer_status = f"Loaded historical: {_layer_name(state, 'historical', historical_choice)}. Press Zoom to activate it for GCP collection."
         elif triggered == "admin-reference-existing-select":
-            if str(reference_choice or "") != str(next_loaded.get("reference_db_layer_id") or ""):
-                next_loaded["reference_db_layer_id"] = None
-            layer_status = "Reference selection changed. Load and Zoom the selected layer before collecting GCPs."
+            if str(reference_choice or "") == str(state.get("basemap_reference_layer_id") or ""):
+                # The basemap is permanently loaded in the map factory and is
+                # a fully valid reference support without an overlay action.
+                next_loaded["reference_loaded_db_layer_id"] = str(reference_choice)
+                next_loaded["reference_db_layer_id"] = str(reference_choice)
+                layer_status = "OpenStreetMap is active as the reference support. Load and Zoom a historical raster to enable collection."
+            else:
+                if str(reference_choice or "") != str(next_loaded.get("reference_db_layer_id") or ""):
+                    next_loaded["reference_db_layer_id"] = None
+                layer_status = "Reference selection changed. Load and Zoom the selected raster before collecting GCPs."
         elif triggered == "admin-historical-existing-select":
             if str(historical_choice or "") != str(next_loaded.get("historical_db_layer_id") or ""):
                 next_loaded["historical_db_layer_id"] = None

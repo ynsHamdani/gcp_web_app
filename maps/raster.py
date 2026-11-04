@@ -233,11 +233,11 @@ def cleanup_expired_temp_rasters(
         Number of expired cache directories removed.
     """
 
-    ttl = (
-        TEMP_RASTER_TTL_HOURS
-        if ttl_hours is None
-        else float(ttl_hours)
-    )
+    if ttl_hours is None:
+        from services.runtime_settings import raster_ttl_hours
+        ttl = raster_ttl_hours(TEMP_RASTER_TTL_HOURS)
+    else:
+        ttl = float(ttl_hours)
 
     if ttl <= 0:
         raise ValueError("Temporary raster TTL must be greater than zero.")
@@ -739,6 +739,16 @@ def prepare_uploaded_raster(
     data = _decode_upload(contents)
     if not data:
         raise ValueError("The uploaded file is empty.")
+
+    # Enforce the persisted maximum on decoded bytes for both student and
+    # administrator upload paths. Flask also caps the larger Dash request body.
+    from services.runtime_settings import max_upload_size_bytes
+    upload_limit = max_upload_size_bytes()
+    if len(data) > upload_limit:
+        limit_mb = upload_limit // (1024 * 1024)
+        raise ValueError(
+            f"Uploaded raster exceeds the configured maximum of {limit_mb} MB."
+        )
 
     sha256 = _hash_bytes(data)
     cache_dir = _cache_dir(raster_kind, sha256)

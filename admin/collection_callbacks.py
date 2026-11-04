@@ -13,6 +13,7 @@ from callbacks.gcp import (
 )
 from maps.admin_gcp import build_admin_pending_markers
 from models.gcp import build_gcp_record
+from services.admin_gcp_requirements import is_reference_available
 
 
 def _require_admin() -> None:
@@ -31,10 +32,9 @@ def _registry_entry_by_db_id(registry: list[dict], db_layer_id):
 
 
 def _reference_is_available(layer_state: dict, db_layer_id) -> bool:
-    return any(
-        str(option.get("value")) == str(db_layer_id)
-        for option in (layer_state.get("reference_options") or [])
-    )
+    # OpenStreetMap is a permanently mounted base layer and a valid reference.
+    # Uploaded reference rasters must be present in the available selector.
+    return is_reference_available(layer_state, db_layer_id)
 
 
 def _selected_entries(layer_state: dict, loaded_selection: dict):
@@ -44,7 +44,7 @@ def _selected_entries(layer_state: dict, loaded_selection: dict):
     historical_registry = layer_state.get("historical_registry") or []
 
     if not _reference_is_available(layer_state, reference_db_id):
-        raise ValueError("Load an available reference layer before collecting GCPs.")
+        raise ValueError("Select an available reference layer. OpenStreetMap is valid and does not need to be uploaded.")
 
     historical_entry = _registry_entry_by_db_id(historical_registry, historical_db_id)
     if historical_entry is None:

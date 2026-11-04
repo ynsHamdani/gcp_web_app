@@ -254,7 +254,7 @@ def _register_uploaded_layer(
 def register_raster_callbacks(app):
     """Register reference and historical upload callbacks."""
 
-    cleanup_expired_temp_rasters(TEMP_RASTER_TTL_HOURS)
+    cleanup_expired_temp_rasters()
 
     # Make the basemap available as a real reference layer before GCP
     # collection starts.

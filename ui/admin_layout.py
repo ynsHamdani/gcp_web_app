@@ -5,6 +5,7 @@ import dash_ag_grid as dag
 
 from maps.admin_gcp import build_admin_gcp_row
 from services.admin_layer_summary import summarize_unavailable_layers
+from ui.admin_nav import create_workspace_header
 
 
 _BASE_BUTTON = {
@@ -140,14 +141,18 @@ def create_admin_layout(
         "color": "#334155",
         "cursor": "pointer",
     }
+    basemap_id = str(layer_state.get("basemap_reference_layer_id") or "")
+    selected_ref_is_basemap = bool(selected_reference_layer_id and basemap_id and str(selected_reference_layer_id) == basemap_id)
     initial_loaded = {
         "reference_loaded_db_layer_id": str(selected_reference_layer_id) if selected_reference_layer_id else None,
         "historical_loaded_db_layer_id": str(selected_historical_layer_id) if selected_historical_layer_id else None,
-        # Layers can appear at page load, but are not active for collection
-        # until the administrator explicitly presses the relevant Zoom button.
-        "reference_db_layer_id": None,
+        # OpenStreetMap is already present as the map base layer. It is a valid
+        # reference support and is active immediately; uploaded rasters still
+        # require the explicit Load + Zoom actions.
+        "reference_db_layer_id": str(selected_reference_layer_id) if selected_ref_is_basemap else None,
         "historical_db_layer_id": None,
     }
+    collection_ready = bool(initial_loaded["reference_db_layer_id"] and initial_loaded["historical_db_layer_id"])
 
     return html.Div(
         className="app-container admin-container",
@@ -160,61 +165,17 @@ def create_admin_layout(
             "boxSizing": "border-box",
         },
         children=[
-            html.Header(
-                id="admin-workspace-header",
-                style={
-                    "position": "sticky",
-                    "top": "0",
-                    "zIndex": "1000",
-                    "display": "flex",
-                    "alignItems": "center",
-                    "justifyContent": "space-between",
-                    "gap": "12px",
-                    "flexWrap": "wrap",
-                    "padding": "7px 4px",
-                    "background": "rgba(245,247,251,0.97)",
-                    "backdropFilter": "blur(8px)",
-                    "borderBottom": "1px solid #e2e8f0",
-                },
-                children=[
-                    html.Div(
-                        [
-                            html.H2("GCP Workspace", style={"margin": "0", "fontSize": "20px", "color": "#172033"}),
-                            html.Div(f"Signed in as {admin_username} · Administrator", style=muted),
-                        ]
-                    ),
-                    html.Div(
-                        style={"display": "flex", "alignItems": "center", "gap": "12px", "flexWrap": "wrap"},
-                        children=[
-                            html.Nav(
-                                style={"display": "flex", "gap": "5px", "flexWrap": "wrap"},
-                                children=[
-                                    html.Button("Add a GCP", **{"data-admin-nav": "admin-add-gcp-panel", "className": "admin-nav-link is-active", "type": "button"}, style=_BASE_BUTTON),
-                                    html.Button("Filter GCPs", **{"data-admin-nav": "admin-filter-panel", "className": "admin-nav-link", "type": "button"}, style=_BASE_BUTTON),
-                                    html.Button("Maps", **{"data-admin-nav": "admin-maps", "className": "admin-nav-link", "type": "button"}, style=_BASE_BUTTON),
-                                    html.Button("GCP records", **{"data-admin-nav": "admin-records", "className": "admin-nav-link", "type": "button"}, style=_BASE_BUTTON),
-                                ],
-                            ),
-                            html.Form(
-                                action="/logout",
-                                method="post",
-                                style={"display": "inline"},
-                                children=[
-                                    dcc.Input(type="hidden", name="csrf_token", value=csrf_token or ""),
-                                    html.Button("Log out", type="submit", style=_BASE_BUTTON),
-                                ],
-                            ),
-                        ],
-                    ),
-                ],
-            ),
+            create_workspace_header(admin_username=admin_username, csrf_token=csrf_token),
+            html.Div(style={"height": "70px"}),
 
             # Layer manager is the main starting point. Existing layers and
             # upload controls are grouped here; upload is collapsed by default.
-            html.Section(
+            html.Details(
                 id="admin-add-gcp-panel",
+                open=True,
                 style={**card_style, "marginTop": "10px", "marginBottom": "10px", "scrollMarginTop": "75px"},
                 children=[
+                    html.Summary("Add a GCP · Layer manager", style={"fontSize": "14px", "fontWeight": "750", "cursor": "pointer", "color": "#172033", "marginBottom": "9px"}),
                     html.Div(
                         style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "gap": "10px", "flexWrap": "wrap", "marginBottom": "8px"},
                         children=[
@@ -327,13 +288,13 @@ def create_admin_layout(
                         style={"display": "flex", "alignItems": "center", "gap": "7px", "flexWrap": "wrap"},
                         children=[
                             html.Strong("Collection", style={"fontSize": "12px"}),
-                            html.Button("Add GCP", id="admin-add-gcp-button", n_clicks=0, disabled=True, style=_DISABLED_BUTTON),
+                            html.Button("Add GCP", id="admin-add-gcp-button", n_clicks=0, disabled=not collection_ready, style=_PRIMARY_BUTTON if collection_ready else _DISABLED_BUTTON),
                             html.Button("Confirm GCP", id="admin-confirm-gcp-button", n_clicks=0, disabled=True, style=_BASE_BUTTON),
                             html.Button("Cancel", id="admin-cancel-gcp-button", n_clicks=0, disabled=True, style=_BASE_BUTTON),
                             html.Span("Click reference map; drag the historical marker to refine.", style=muted),
                         ],
                     ),
-                    html.Div(id="admin-gcp-collection-status", children="Activate one reference and one historical layer with their Zoom buttons to enable collection.", role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "6px"}),
+                    html.Div(id="admin-gcp-collection-status", children=("OpenStreetMap is active as the reference support. Load and Zoom a historical raster to enable collection." if selected_ref_is_basemap else "Activate one reference and one historical layer with their Zoom buttons to enable collection."), role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "6px"}),
                 ],
             ),
 
