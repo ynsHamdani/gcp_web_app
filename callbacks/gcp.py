@@ -339,6 +339,7 @@ def register_gcp_callbacks(app, store: GCPStore):
         Input("cancel-gcp-button", "n_clicks"),
         Input("gcp-table", "selectedRows"),
         Input("delete-gcp-button", "n_clicks"),
+        Input("refresh-gcp-button", "n_clicks"),
         State("gcp-pending", "data"),
         State("gcp-records", "data"),
         State("gcp-collection-active", "data"),
@@ -357,6 +358,7 @@ def register_gcp_callbacks(app, store: GCPStore):
         cancel_clicks,
         selected_rows,
         delete_clicks,
+        refresh_clicks,
         pending,
         records,
         collection_active,
@@ -366,12 +368,48 @@ def register_gcp_callbacks(app, store: GCPStore):
         reference_registry,
         historical_registry,
     ):
-        del add_clicks, confirm_clicks, cancel_clicks, delete_clicks
+        del add_clicks, confirm_clicks, cancel_clicks, delete_clicks, refresh_clicks
 
         records = records or []
         selected_rows = selected_rows or []
         collection_active = bool(collection_active)
         triggered = ctx.triggered_id
+
+        # -------------------------------------------------
+        # Refresh only the authenticated student's records.
+        # The pending point and selected map/layer state are left untouched.
+        # -------------------------------------------------
+        if triggered == "refresh-gcp-button":
+            if not current_user.is_authenticated or getattr(current_user, "role", None) != "student":
+                raise PermissionError("Only an authenticated student can refresh personal GCP records.")
+            try:
+                refreshed_records = store.list_for_student(int(current_user.get_id()))
+            except Exception as exc:
+                return _no_change_return(
+                    collection_active,
+                    status=f"Could not refresh your GCP records: {exc}",
+                    selected_id=selected_gcp_id,
+                    delete_disabled=not bool(selected_gcp_id),
+                )
+
+            refreshed_ids = {str(record.get("gcp_id")) for record in refreshed_records}
+            keep_selected = selected_gcp_id if str(selected_gcp_id) in refreshed_ids else None
+            if pending:
+                refresh_message = f"Refreshed {len(refreshed_records)} GCP record(s). Pending GCP preserved."
+            else:
+                refresh_message = f"Refreshed {len(refreshed_records)} GCP record(s)."
+            return (
+                no_update,
+                refreshed_records,
+                refresh_message,
+                no_update,
+                no_update,
+                True,
+                collection_active,
+                "Stop GCP" if collection_active else "Add GCP",
+                keep_selected,
+                not bool(keep_selected),
+            )
 
         # -------------------------------------------------
         # Table selection

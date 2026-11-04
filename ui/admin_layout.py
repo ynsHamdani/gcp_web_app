@@ -161,12 +161,22 @@ def create_admin_layout(
             "margin": "0 auto",
             "padding": "8px 16px 18px",
             "background": "#f5f7fb",
-            "minHeight": "100vh",
+            "height": "100vh",
+            "overflow": "hidden",
             "boxSizing": "border-box",
         },
         children=[
             create_workspace_header(admin_username=admin_username, csrf_token=csrf_token),
-            html.Div(style={"height": "70px"}),
+            html.Main(
+                id="admin-workspace-scroll",
+                style={
+                    "position": "fixed", "top": "72px", "bottom": "0", "left": "0", "right": "0",
+                    "overflowY": "auto", "overflowX": "hidden", "overscrollBehavior": "contain",
+                },
+                children=[
+                    html.Div(
+                        style={"maxWidth": "1800px", "margin": "0 auto", "padding": "8px 16px 18px", "boxSizing": "border-box"},
+                        children=[
 
             # Layer manager is the main starting point. Existing layers and
             # upload controls are grouped here; upload is collapsed by default.
@@ -389,5 +399,9 @@ def create_admin_layout(
             dcc.Store(id="admin-gcp-collection-active", data=False),
             dcc.Store(id="admin-gcp-drag-event", data=None),
             dcc.Store(id="admin-gcp-collection-revision", data=0),
+                        ],
+                    ),
+                ],
+            ),
         ],
     )

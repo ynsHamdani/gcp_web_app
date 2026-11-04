@@ -10,14 +10,35 @@ _INPUT = {"width": "100%", "boxSizing": "border-box", "padding": "10px", "border
 _BUTTON = {"padding": "9px 13px", "border": "1px solid #1d4ed8", "borderRadius": "7px", "background": "#1d4ed8", "color": "#fff", "fontWeight": "650", "fontSize": "12px", "cursor": "pointer"}
 
 
-def create_admin_config_layout(*, settings: dict, gcp_crs: str, admin_username: str, csrf_token: str, secure_cookie: bool, debug_mode: bool):
+def create_admin_config_layout(*, settings: dict, gcp_crs: str, admin_username: str, csrf_token: str, secure_cookie: bool, debug_mode: bool, carto_api_key_configured: bool = False):
     security_status = "Secure cookie enabled" if secure_cookie else "Secure cookie disabled — required for HTTPS production deployment"
+    carto_status = (
+        "CARTO API key detected in the local .env file. The key is never displayed in this page."
+        if carto_api_key_configured
+        else "CARTO API key is not configured. Add CARTO_API_KEY to the local .env file; until then the maps safely fall back to OpenStreetMap."
+    )
     return create_page_shell(
         title="Configuration",
         subtitle="Manage the small set of operational settings that can safely change at runtime.",
         admin_username=admin_username, csrf_token=csrf_token, active_page="config",
         children=[
             html.Section(style=_CARD, children=[
+                html.H3("Basemap provider", style={"fontSize": "15px", "margin": "0 0 10px"}),
+                html.Label("Default basemap for student and administrator maps", style=_LABEL),
+                dcc.Dropdown(
+                    id="admin-config-basemap-provider",
+                    options=[
+                        {"label": "CARTO Voyager (recommended)", "value": "carto"},
+                        {"label": "OpenStreetMap standard tiles", "value": "osm"},
+                    ],
+                    value=settings.get("basemap_provider", "carto"),
+                    clearable=False,
+                    searchable=False,
+                ),
+                html.P(carto_status, style={"fontSize": "12px", "color": "#166534" if carto_api_key_configured else "#92400e", "margin": "8px 0 0"}),
+                html.P("Provider changes are saved in PostgreSQL and take effect when the GCP Workspace or student page is opened/refreshed. Attribution is included on both maps.", style={"fontSize": "11px", "color": "#64748b", "margin": "6px 0 0"}),
+            ]),
+            html.Section(style={**_CARD, "marginTop": "12px"}, children=[
                 html.H3("Coordinate reference system", style={"fontSize": "15px", "margin": "0 0 8px"}),
                 html.Label("GCP coordinate reference system", style=_LABEL),
                 html.Div(gcp_crs, style={"fontFamily": "monospace", "fontSize": "14px", "fontWeight": "700", "padding": "10px", "background": "#f1f5f9", "borderRadius": "7px", "display": "inline-block"}),

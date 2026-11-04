@@ -26,6 +26,7 @@ from maps.map_views import (
 from models.gcp import gcp_table_row
 from storage.gcp_store import PostgresGCPStore
 from storage.layer_store import PostgresLayerStore
+from services.runtime_settings import get_runtime_setting
 from ui.controls import create_app_layout
 from config import SECRET_KEY, RASTER_SIGNING_KEY
 
@@ -73,8 +74,6 @@ atexit.register(close_db_pool)
 # MAPS + PAGE LAYOUT
 # =========================================================
 
-reference_map = create_reference_map()
-historical_map = create_historical_map()
 
 def serve_layout():
     # Dash may evaluate the layout once at startup without a request.
@@ -104,6 +103,9 @@ def serve_layout():
         for record in initial_gcp_records
     ]
 
+    basemap_provider = get_runtime_setting("basemap_provider", "carto")
+    reference_map = create_reference_map(basemap_provider)
+    historical_map = create_historical_map(basemap_provider)
     return create_app_layout(
         reference_map=reference_map,
         historical_map=historical_map,

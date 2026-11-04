@@ -79,8 +79,12 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
         else:
             records, users, layer_state, csrf_token, admin_username = [], [], _empty_layer_state(), "", "Administrator"
 
-        reference_map = create_reference_map()
-        historical_map = create_historical_map()
+        # Resolve the persisted provider for both maps on every page load.
+        # create_basemap() falls back to OSM if CARTO is selected but the
+        # local CARTO_API_KEY is missing, avoiding a blank basemap.
+        basemap_provider = settings_store.get_value("basemap_provider", "carto")
+        reference_map = create_reference_map(basemap_provider)
+        historical_map = create_historical_map(basemap_provider)
         selected_reference_id = _default_available_layer(records, layer_state["reference_registry"], "reference_layer_id")
         selected_reference_id = selected_reference_id or layer_state.get("basemap_reference_layer_id")
         selected_historical_id = _default_available_layer(records, layer_state["historical_registry"], "historical_layer_id")

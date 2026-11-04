@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Runtime setting access shared by uploads and opportunistic cache cleanup."""
+"""Runtime setting access shared by uploads, cleanup and map rendering."""
 
 import math
 
@@ -30,6 +30,12 @@ def get_runtime_setting(key: str, default):
         return store.get_value(key, default)
     except Exception:
         return default
+
+
+def get_basemap_provider(default: str = "carto") -> str:
+    """Read the persisted provider; invalid values use the configured default."""
+    value = str(get_runtime_setting("basemap_provider", default) or default).strip().lower()
+    return value if value in {"carto", "osm"} else default
 
 
 def raster_ttl_hours(default: int = 24) -> float:

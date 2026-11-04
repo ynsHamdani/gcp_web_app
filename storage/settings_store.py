@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from config import BASEMAP_PROVIDER_DEFAULT
 
 DEFAULT_SETTINGS = {
     "raster_ttl_hours": 24,
     "max_upload_size_mb": 256,
+    "basemap_provider": BASEMAP_PROVIDER_DEFAULT,
 }
 
 
@@ -48,9 +50,13 @@ class PostgresSettingsStore:
         return result
 
     @staticmethod
-    def _validate(key: str, value: int) -> None:
+    def _validate(key: str, value: Any) -> None:
         if key not in DEFAULT_SETTINGS:
             raise ValueError(f"Setting is not editable: {key}")
+        if key == "basemap_provider":
+            if value not in {"carto", "osm"}:
+                raise ValueError("Basemap provider must be 'carto' or 'osm'.")
+            return
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError("Setting value must be an integer.")
         if key == "raster_ttl_hours" and not 1 <= value <= 8760:
@@ -58,19 +64,17 @@ class PostgresSettingsStore:
         if key == "max_upload_size_mb" and not 16 <= value <= 2048:
             raise ValueError("Maximum upload size must be between 16 and 2048 MB.")
 
-    def set_values(self, values: dict[str, int], updated_by: int) -> None:
+    def set_values(self, values: dict[str, Any], updated_by: int) -> None:
         """Atomically validate and upsert a group of runtime settings."""
         if not values:
             raise ValueError("At least one setting must be supplied.")
         for key, value in values.items():
             self._validate(key, value)
-
         ordered = list(values.items())
         placeholders = ", ".join(["(%s, %s::jsonb, %s, CURRENT_TIMESTAMP)"] * len(ordered))
         parameters = []
         for key, value in ordered:
             parameters.extend((key, json.dumps(value), int(updated_by)))
-
         sql = f"""
             INSERT INTO app_settings (setting_key, setting_value, updated_by, updated_at)
             VALUES {placeholders}
@@ -83,5 +87,5 @@ class PostgresSettingsStore:
             with conn.cursor() as cur:
                 cur.execute(sql, tuple(parameters))
 
-    def set_value(self, key: str, value: int, updated_by: int) -> None:
+    def set_value(self, key: str, value: Any, updated_by: int) -> None:
         self.set_values({key: value}, updated_by)
