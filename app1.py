@@ -12,6 +12,7 @@ from auth.store import AuthStore
 from admin.dashboard import mount_admin_dashboard
 from callbacks.export import register_student_export_callbacks
 from callbacks.gcp import register_gcp_callbacks
+from callbacks.gcp_context import register_gcp_context_callbacks
 from callbacks.navigation import register_navigation_callbacks
 from callbacks.opacity import register_opacity_callbacks
 from callbacks.raster import (
@@ -24,7 +25,8 @@ from maps.map_views import (
     create_reference_map,
 )
 from models.gcp import gcp_table_row
-from storage.gcp_store import PostgresGCPStore
+from storage.gcp_context_store import GCPContextCategoryStore
+from storage.semantic_gcp_store import SemanticGCPStore
 from storage.layer_store import PostgresLayerStore
 from services.runtime_settings import get_runtime_setting
 from ui.controls import create_app_layout
@@ -58,7 +60,9 @@ init_auth(
     raster_signing_key=RASTER_SIGNING_KEY,
 )
 
-gcp_store = PostgresGCPStore(db_pool)
+context_store = GCPContextCategoryStore(db_pool)
+app.server.extensions["gcp_context_store"] = context_store
+gcp_store = SemanticGCPStore(db_pool)
 reference_layer_store = PostgresLayerStore(db_pool)
 historical_layer_store = PostgresLayerStore(db_pool)
 
@@ -114,6 +118,7 @@ def serve_layout():
         auth_username=auth_username,
         auth_role=auth_role,
         csrf_token=csrf_token,
+        context_categories=context_store.list_active() if auth_role == "student" else [],
     )
 
 
@@ -131,6 +136,7 @@ register_raster_callbacks(app)
 register_navigation_callbacks(app)
 register_opacity_callbacks(app)
 register_gcp_callbacks(app, gcp_store)
+register_gcp_context_callbacks(app, gcp_store, context_store)
 
 register_student_export_callbacks(app, gcp_store)
 

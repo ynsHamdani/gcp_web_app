@@ -26,14 +26,16 @@ def _optional_id(value, field_name: str) -> int | None:
     return result
 
 
-def _filtered_records(store, contributor_value, historical_value):
+def _filtered_records(store, contributor_value, historical_value, context_value="all"):
     _require_admin()
     contributor_id = _optional_id(contributor_value, "contributor")
     historical_layer_id = _optional_id(historical_value, "historical layer")
+    context_category_id = _optional_id(context_value, "context category")
     return annotate_gcp_raster_availability(
         store.list_for_admin(
             student_id=contributor_id,
             historical_layer_id=historical_layer_id,
+            context_category_id=context_category_id,
         )
     )
 
@@ -84,9 +86,13 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         Input("admin-delete-gcp", "n_clicks"),
         Input("admin-gcp-collection-revision", "data"),
         Input("admin-layer-state", "data"),
+        Input("admin-save-context-changes", "n_clicks"),
         State("admin-contributor-filter", "value"),
         State("admin-historical-filter", "value"),
+        State("admin-context-filter", "value"),
         State("admin-gcp-table", "selectedRows"),
+        State("admin-context-edit-category", "value"),
+        State("admin-context-edit-remark", "value"),
         prevent_initial_call=True,
     )
     def update_admin_gcp_view(
@@ -94,11 +100,15 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         delete_clicks,
         collection_revision,
         layer_state,
+        save_context_clicks,
         contributor_value,
         historical_value,
+        context_value,
         selected_rows,
+        edit_category_id,
+        edit_remark,
     ):
-        del apply_clicks, delete_clicks, collection_revision
+        del apply_clicks, delete_clicks, collection_revision, save_context_clicks
         _require_admin()
         triggered = ctx.triggered_id
         status_prefix = ""
@@ -106,6 +116,19 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
 
         if not layer_state:
             status_prefix = "Layer catalogue is not loaded yet. "
+
+        if triggered == "admin-save-context-changes":
+            selected_rows = selected_rows or []
+            gcp_id = selected_rows[0].get("gcp_id") if selected_rows else None
+            try:
+                if not gcp_id:
+                    raise ValueError("Select a GCP row before editing its context.")
+                if edit_category_id in (None, ""):
+                    raise ValueError("Choose an active context category.")
+                gcp_store.update_context(gcp_id, int(edit_category_id), edit_remark)
+                status_prefix = f"Updated context annotation for {gcp_id}. "
+            except Exception as exc:
+                status_prefix = f"Context annotation was not updated: {exc}. "
 
         if triggered == "admin-delete-gcp":
             selected_rows = selected_rows or []
@@ -128,7 +151,7 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
                     status_prefix = f"Deletion failed: {exc}. "
 
         try:
-            records = _filtered_records(gcp_store, contributor_value, historical_value)
+            records = _filtered_records(gcp_store, contributor_value, historical_value, context_value)
         except Exception as exc:
             return (
                 no_update, no_update, no_update, no_update,
@@ -231,10 +254,37 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
         Input("admin-export-gcps", "n_clicks"),
         State("admin-contributor-filter", "value"),
         State("admin-historical-filter", "value"),
+        State("admin-context-filter", "value"),
         prevent_initial_call=True,
     )
-    def export_admin_gcps(n_clicks, contributor_value, historical_value):
+    def export_admin_gcps(n_clicks, contributor_value, historical_value, context_value):
         if not n_clicks:
             return no_update
-        records = _filtered_records(gcp_store, contributor_value, historical_value)
+        records = _filtered_records(gcp_store, contributor_value, historical_value, context_value)
         return dcc.send_bytes(build_gcp_csv(records), "gcp_export.csv")
+
+
+    @app.callback(
+        Output("admin-context-edit-category", "value"),
+        Output("admin-context-edit-remark", "value"),
+        Input("admin-gcp-table", "selectedRows"),
+        State("admin-gcp-records", "data"),
+        prevent_initial_call=True,
+    )
+    def populate_context_editor(selected_rows, records):
+        _require_admin()
+        selected_rows = selected_rows or []
+        if not selected_rows:
+            return None, ""
+        selected_id = str(selected_rows[0].get("gcp_id") or "")
+        record = next((item for item in (records or []) if str(item.get("gcp_id")) == selected_id), None)
+        if record is None:
+            return None, ""
+        category_id = record.get("context_category_id")
+        # Legacy annotations are not selectable. An administrator must select
+        # an active replacement before saving a correction.
+        try:
+            category_id = str(category_id) if category_id and record.get("context_category_code") != "LEGACY_UNRECORDED" else None
+        except Exception:
+            category_id = None
+        return category_id, record.get("context_remark") or ""

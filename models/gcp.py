@@ -152,6 +152,8 @@ def gcp_table_row(record: dict) -> dict:
         ),
         "offset": f"{offset_m:.2f} m",
         "student": student_id,
+        "context_category": record.get("context_category_label", ""),
+        "context_remark": record.get("context_remark") or "",
         "status": record.get("status", "confirmed"),
         "recorded_at": record.get("recorded_at", ""),
     }

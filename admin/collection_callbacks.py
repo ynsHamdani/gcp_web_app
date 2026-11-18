@@ -89,6 +89,8 @@ def register_admin_collection_callbacks(app, gcp_store):
         State("admin-gcp-collection-active", "data"),
         State("admin-selection-layer-state", "data"),
         State("admin-gcp-collection-revision", "data"),
+        State("admin-gcp-context-category", "value"),
+        State("admin-gcp-context-remark", "value"),
         prevent_initial_call=True,
     )
     def manage_admin_gcp_collection(
@@ -102,6 +104,8 @@ def register_admin_collection_callbacks(app, gcp_store):
         collection_active,
         layer_state,
         revision,
+        context_category_id,
+        context_remark,
     ):
         del add_clicks, confirm_clicks, cancel_clicks
         _require_admin()
@@ -267,7 +271,12 @@ def register_admin_collection_callbacks(app, gcp_store):
                     reference_layer_id=selected["reference_db_id"],
                     historical_layer_id=selected["historical_db_id"],
                 )
-                saved = gcp_store.create(record)
+                if context_category_id in (None, ""):
+                    raise ValueError("Choose a GCP context category before confirming.")
+                saved = gcp_store.create(
+                    record, context_category_id=int(context_category_id),
+                    context_remark=context_remark,
+                )
             except Exception as exc:
                 return unchanged(
                     status=f"Could not confirm GCP: {exc}",

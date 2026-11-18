@@ -8,13 +8,14 @@ from flask_login import current_user
 from flask_wtf.csrf import generate_csrf
 
 from admin.config_callbacks import register_admin_config_callbacks
+from admin.context_category_callbacks import register_context_category_callbacks
 from config import CARTO_API_KEY, GCP_CRS
 from ui.admin_config_layout import create_admin_config_layout
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def mount_admin_config_dashboard(*, server, settings_store, auth_store):
+def mount_admin_config_dashboard(*, server, settings_store, auth_store, context_store):
     app = Dash(
         "gcp_admin_config_dashboard", server=server,
         url_base_pathname="/admin/config/",
@@ -39,8 +40,10 @@ def mount_admin_config_dashboard(*, server, settings_store, auth_store):
             secure_cookie=bool(server.config.get("SESSION_COOKIE_SECURE")),
             debug_mode=bool(server.debug),
             carto_api_key_configured=bool(CARTO_API_KEY),
+            context_categories=context_store.list_all() if is_admin else [],
         )
 
     app.layout = serve_layout
     register_admin_config_callbacks(app, settings_store, auth_store, GCP_CRS)
+    register_context_category_callbacks(app, context_store, auth_store)
     return app

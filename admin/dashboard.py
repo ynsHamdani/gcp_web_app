@@ -60,6 +60,9 @@ def _empty_layer_state() -> dict:
 def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
     """Mount GCP Workspace, User Management and Configuration as separate protected Dash pages."""
     settings_store = server.extensions.get("gcp_settings_store") or PostgresSettingsStore(auth_store.pool)
+    context_store = server.extensions.get("gcp_context_store")
+    if context_store is None:
+        raise RuntimeError("GCP context category store is not configured.")
     server.extensions["gcp_settings_store"] = settings_store
 
     admin_app = Dash(
@@ -105,6 +108,7 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
             selected_reference_layer_id=selected_reference_id,
             selected_historical_layer_id=selected_historical_id,
             unavailable_layers=layer_state["unavailable_layers"],
+            context_categories=context_store.list_all(),
             csrf_token=csrf_token, admin_username=admin_username,
         )
 
@@ -115,6 +119,6 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
 
     # These are distinct Dash applications sharing the same protected Flask server.
     users_app = mount_admin_users_dashboard(server=server, auth_store=auth_store)
-    config_app = mount_admin_config_dashboard(server=server, settings_store=settings_store, auth_store=auth_store)
+    config_app = mount_admin_config_dashboard(server=server, settings_store=settings_store, auth_store=auth_store, context_store=context_store)
     server.extensions["gcp_admin_apps"] = {"workspace": admin_app, "users": users_app, "config": config_app}
     return admin_app

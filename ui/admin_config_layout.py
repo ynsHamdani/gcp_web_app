@@ -3,6 +3,7 @@ from __future__ import annotations
 from dash import dcc, html
 
 from ui.admin_nav import create_page_shell
+from ui.gcp_context_components import create_admin_category_manager
 
 _CARD = {"background": "#fff", "border": "1px solid #dbe2ea", "borderRadius": "11px", "padding": "15px", "minWidth": "0"}
 _LABEL = {"display": "block", "fontSize": "12px", "fontWeight": "650", "marginBottom": "5px", "color": "#334155"}
@@ -10,7 +11,7 @@ _INPUT = {"width": "100%", "boxSizing": "border-box", "padding": "10px", "border
 _BUTTON = {"padding": "9px 13px", "border": "1px solid #1d4ed8", "borderRadius": "7px", "background": "#1d4ed8", "color": "#fff", "fontWeight": "650", "fontSize": "12px", "cursor": "pointer"}
 
 
-def create_admin_config_layout(*, settings: dict, gcp_crs: str, admin_username: str, csrf_token: str, secure_cookie: bool, debug_mode: bool, carto_api_key_configured: bool = False):
+def create_admin_config_layout(*, settings: dict, gcp_crs: str, admin_username: str, csrf_token: str, secure_cookie: bool, debug_mode: bool, carto_api_key_configured: bool = False, context_categories: list[dict] | None = None):
     security_status = "Secure cookie enabled" if secure_cookie else "Secure cookie disabled — required for HTTPS production deployment"
     carto_status = (
         "CARTO API key detected in the local .env file. The key is never displayed in this page."
@@ -70,5 +71,6 @@ def create_admin_config_layout(*, settings: dict, gcp_crs: str, admin_username: 
                     html.P("Server-side sessions are revocable. Password reset and account deactivation revoke all sessions for the affected student. Full live-session browsing/revocation UI is intentionally a later security dashboard.", style={"fontSize": "12px", "color": "#64748b", "lineHeight": "1.5", "margin": "8px 0 0"}),
                 ]),
             ]),
+            create_admin_category_manager(context_categories),
         ],
     )

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from maps.admin_gcp import build_admin_gcp_row, build_admin_gcp_markers
+
+from maps.admin_gcp import build_admin_gcp_row, build_admin_gcp_geojson
 
 
 def _record():
@@ -37,11 +38,12 @@ def test_admin_row_contains_owner_layer_names_and_raster_flags():
 
 def test_invalid_map_kind_is_rejected():
     with pytest.raises(ValueError):
-        build_admin_gcp_markers([_record()], "unknown")
+        build_admin_gcp_geojson([_record()], "unknown")
 
-
-def test_markers_are_clustered_and_missing_positions_are_skipped():
+def test_geojson_builder_skips_missing_positions():
     records = [_record(), {"gcp_id": "GCP-bad", "reference": {}, "historical": {}}]
-    groups = build_admin_gcp_markers(records, "reference")
-    assert len(groups) == 1
-    assert len(groups[0].children) == 1
+    result = build_admin_gcp_geojson(records, "reference")
+
+    assert result["type"] == "FeatureCollection"
+    assert len(result["features"]) == 1
+    assert result["features"][0]["geometry"]["coordinates"] == [10.2, 56.1]

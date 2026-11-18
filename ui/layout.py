@@ -3,6 +3,8 @@ from __future__ import annotations
 import dash_ag_grid as dag
 from dash import dcc, html
 
+from ui.gcp_context_components import create_student_context_modal
+
 
 def create_map_panel(title: str, subtitle: str, upload_id: str, upload_label: str, opacity_id: str, map_component, status_id: str):
     """Create one complete map panel."""
@@ -91,6 +93,8 @@ def create_gcp_table(initial_rows=None):
             {"field": "historical", "headerName": "Historical"},
             {"field": "offset", "headerName": "Offset"},
             {"field": "student", "headerName": "Student"},
+            {"field": "context_category", "headerName": "Context"},
+            {"field": "context_remark", "headerName": "Context remark"},
             {"field": "status", "headerName": "Status"},
         ],
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
@@ -99,7 +103,7 @@ def create_gcp_table(initial_rows=None):
     )
 
 
-def create_layout(reference_map, historical_map, initial_rows=None, auth_username=None, auth_role=None, csrf_token=None):
+def create_layout(reference_map, historical_map, initial_rows=None, auth_username=None, auth_role=None, csrf_token=None, context_categories=None):
     """Build the main student page with a one-click GCP records refresh."""
     gcp_table = create_gcp_table(initial_rows=initial_rows)
     return html.Div(
@@ -175,5 +179,6 @@ def create_layout(reference_map, historical_map, initial_rows=None, auth_usernam
             dcc.Store(id="gcp-selected-id", data=None),
             dcc.Store(id="gcp-drag-event", data=None),
             dcc.Store(id="gcp-collection-active", data=False),
+            create_student_context_modal(context_categories),
         ],
     )

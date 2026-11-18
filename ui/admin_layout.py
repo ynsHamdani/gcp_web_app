@@ -6,6 +6,11 @@ import dash_ag_grid as dag
 from maps.admin_gcp import build_admin_gcp_row
 from services.admin_layer_summary import summarize_unavailable_layers
 from ui.admin_nav import create_workspace_header
+from ui.gcp_context_components import (
+    create_admin_context_creation_controls,
+    create_admin_context_editor,
+    create_admin_context_filter,
+)
 
 
 _BASE_BUTTON = {
@@ -79,6 +84,7 @@ def create_admin_layout(
     unavailable_layers: list[str] | None = None,
     csrf_token: str = "",
     admin_username: str = "Administrator",
+    context_categories: list[dict] | None = None,
 ):
     """Build a compact workspace with explicit load/zoom/activate controls."""
 
@@ -97,6 +103,8 @@ def create_admin_layout(
         {"field": "historical_layer_name", "headerName": "Historical layer", "width": 190},
         {"field": "reference_layer_name", "headerName": "Reference layer", "width": 190},
         {"field": "offset_m", "headerName": "Offset (m)", "width": 105},
+        {"field": "context_category", "headerName": "Context", "width": 165},
+        {"field": "context_remark", "headerName": "Context remark", "width": 210},
         {"field": "reference_raster_available", "headerName": "Reference raster", "width": 125},
         {"field": "historical_raster_available", "headerName": "Historical raster", "width": 130},
         {"field": "status", "headerName": "Status", "width": 100},
@@ -308,6 +316,8 @@ def create_admin_layout(
                 ],
             ),
 
+            create_admin_context_creation_controls(context_categories),
+
             html.Details(
                 id="admin-filter-panel",
                 open=False,
@@ -315,7 +325,7 @@ def create_admin_layout(
                 children=[
                     html.Summary("Filter GCPs", style={"fontSize": "13px", "fontWeight": "700", "cursor": "pointer"}),
                     html.Div(
-                        style={"display": "grid", "gridTemplateColumns": "minmax(220px, 1fr) minmax(220px, 1fr) auto", "gap": "10px", "alignItems": "end", "marginTop": "9px"},
+                        style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(180px, 1fr)) auto", "gap": "10px", "alignItems": "end", "marginTop": "9px"},
                         children=[
                             html.Div(
                                 [
@@ -329,6 +339,7 @@ def create_admin_layout(
                                     dcc.Dropdown(id="admin-historical-filter", options=[{"label": "All historical layers", "value": "all"}, *historical_options], value="all", clearable=False, searchable=True, placeholder="Select a historical layer"),
                                 ]
                             ),
+                            html.Div([html.Label("Semantic context", style=field_label), create_admin_context_filter(context_categories)]),
                             html.Div(
                                 style={"display": "flex", "gap": "6px", "flexWrap": "wrap"},
                                 children=[
@@ -385,6 +396,8 @@ def create_admin_layout(
                     table,
                 ],
             ),
+
+            create_admin_context_editor(context_categories),
 
             # State shared by layer actions, viewport dispatcher, Step 1 filters,
             # and the administrator collection workflow.

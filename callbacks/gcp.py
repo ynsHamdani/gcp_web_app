@@ -680,77 +680,20 @@ def register_gcp_callbacks(app, store: GCPStore):
             if not pending:
                 return _no_change_return(
                     collection_active,
-                    status="No pending GCP to confirm.",
+                    status="No pending GCP to annotate.",
                     selected_id=selected_gcp_id,
                     delete_disabled=not bool(selected_gcp_id),
                 )
 
-            if not current_user.is_authenticated:
-                raise PermissionError(
-                    "Authentication is required to manage GCPs."
-                )
-            student_id = int(current_user.get_id())
-
-            try:
-                reference_db_id, historical_db_id = _resolve_layer_ids(
-                    pending,
-                    reference_registry,
-                    historical_registry,
-                )
-
-                pixel, line = _historical_pixel_line(
-                    historical_registry,
-                    pending.get("historical_layer_id"),
-                    pending["historical"],
-                )
-
-                record = build_gcp_record(
-                    reference_position=[
-                        pending["reference"]["lat"],
-                        pending["reference"]["lon"],
-                    ],
-                    historical_position=[
-                        pending["historical"]["lat"],
-                        pending["historical"]["lon"],
-                    ],
-                    historical_pixel=pixel,
-                    historical_line=line,
-                    student_id=str(student_id),
-                    reference_layer_id=str(reference_db_id),
-                    historical_layer_id=str(historical_db_id),
-                )
-
-                saved = store.create(record)
-                records = store.list_for_student(int(current_user.get_id()))
-
-            except Exception as exc:
-                return _no_change_return(
-                    collection_active,
-                    status=f"Could not confirm GCP: {exc}",
-                    confirm_disabled=False,
-                    cancel_disabled=False,
-                    selected_id=selected_gcp_id,
-                    delete_disabled=not bool(selected_gcp_id),
-                )
-
-            status = (
-                f"Confirmed {saved['gcp_id']} — "
-                f"offset: {saved['offset_m']:.2f} m"
-            )
-            if collection_active:
-                status += " | Ready for next point."
-
-            return (
-                None,
-                records,
-                status,
-                True,
-                True,
-                True,
+            # Persistence is delegated to callbacks.gcp_context. The modal
+            # requires a category and commits the geometry + context together.
+            return _no_change_return(
                 collection_active,
-                "Stop GCP" if collection_active else "Add GCP",
-                None,
-                True,
+                status="Select a semantic context category and save the GCP in the context window.",
+                confirm_disabled=False,
+                cancel_disabled=False,
+                selected_id=selected_gcp_id,
+                delete_disabled=not bool(selected_gcp_id),
             )
 
         # -------------------------------------------------

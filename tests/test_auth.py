@@ -7,6 +7,8 @@ import pytest
 from flask import Flask
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from flask_wtf.csrf import generate_csrf
+
 from auth import init_auth
 from auth.store import AuthUser
 
@@ -48,11 +50,15 @@ def make_client():
 
     @app.route("/_dash-layout")
     def dash_layout():
-        return "dash layout payload"
+        return generate_csrf()
 
     @app.route("/_dash-update-component", methods=["POST"])
     def dash_update():
         return "callback accepted"
+
+    @app.route("/admin/")
+    def admin_dashboard():
+        return "admin dashboard"
 
     init_auth(app, FakeUserStore(), secret_key="test-secret-key-long-enough-for-tests-0123456789")
     return app.test_client()
@@ -101,10 +107,13 @@ def test_student_can_login_and_is_denied_admin_page():
 def test_admin_is_routed_to_admin_and_cannot_call_dash_endpoints():
     client = make_client()
     response, _ = login(client, "admin", "admin-pass-1234")
+
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/admin")
-    assert client.get("/admin").status_code == 200
-    assert client.get("/").headers["Location"].endswith("/admin")
+
+    assert client.get("/admin", follow_redirects=True).status_code == 200
+    assert client.get("/").headers["Location"].endswith("/admin/")
+
     assert client.get("/_dash-layout").status_code == 403
 
 
@@ -118,14 +127,18 @@ def test_login_rejects_bad_credentials_and_logout_requires_csrf():
     assert response.status_code == 200
     assert b"Invalid username/email or password" in response.data
 
-    response, token = login(client, "student", "student-pass-123")
+    response, _ = login(client, "student", "student-pass-123")
     assert response.status_code == 302
+
     bad_logout = client.post("/logout", data={"csrf_token": "invalid-token"})
     assert bad_logout.status_code == 400
+
+    # Obtain a fresh CSRF token from the authenticated session.
+    token = client.get("/_dash-layout").get_data(as_text=True)
+
     good_logout = client.post("/logout", data={"csrf_token": token})
     assert good_logout.status_code == 302
     assert client.get("/").status_code == 302
-
 
 def test_dash_post_rejects_cross_origin_requests():
     client = make_client()
