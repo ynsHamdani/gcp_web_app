@@ -290,6 +290,7 @@ def register_admin_layer_callbacks(app, layer_store):
         # A per-request state is passed from the layout store; no registry data
         # is copied into a global cache between administrators/sessions.
         reference_options = state.get("reference_options", [])
+        basemap_label = str(state.get("basemap_label") or "Configured basemap")
         historical_options = state.get("available_historical_options", [])
 
         selected_ref = uploaded_ids.get("reference") or reference_choice
@@ -329,7 +330,7 @@ def register_admin_layer_callbacks(app, layer_store):
                 next_loaded["reference_loaded_db_layer_id"] = str(reference_choice)
                 if str(reference_choice) == str(state.get("basemap_reference_layer_id") or ""):
                     next_loaded["reference_db_layer_id"] = str(reference_choice)
-                    layer_status = "OpenStreetMap is already loaded and active as the reference support. No zoom is required."
+                    layer_status = f"{basemap_label} is already loaded and active as the reference support. No zoom is required."
                 else:
                     if changed:
                         next_loaded["reference_db_layer_id"] = None
@@ -349,7 +350,7 @@ def register_admin_layer_callbacks(app, layer_store):
                 # a fully valid reference support without an overlay action.
                 next_loaded["reference_loaded_db_layer_id"] = str(reference_choice)
                 next_loaded["reference_db_layer_id"] = str(reference_choice)
-                layer_status = "OpenStreetMap is active as the reference support. Load and Zoom a historical raster to enable collection."
+                layer_status = f"{basemap_label} is active as the reference support. Load and Zoom a historical raster to enable collection."
             else:
                 if str(reference_choice or "") != str(next_loaded.get("reference_db_layer_id") or ""):
                     next_loaded["reference_db_layer_id"] = None
@@ -374,7 +375,7 @@ def register_admin_layer_callbacks(app, layer_store):
                     # A basemap has no finite geographic footprint. Activate it
                     # without changing the user's current synchronized extent.
                     send_viewport = False
-                    layer_status = "OpenStreetMap is active as the reference layer; current map view is unchanged."
+                    layer_status = f"{basemap_label} is active as the reference layer; current map view is unchanged."
                 else:
                     registry = state.get(f"{kind}_registry", [])
                     entry = _registry_entry(registry, choice)

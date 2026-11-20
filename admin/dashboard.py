@@ -88,8 +88,8 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
         basemap_provider = settings_store.get_value("basemap_provider", "carto")
         reference_map = create_reference_map(basemap_provider)
         historical_map = create_historical_map(basemap_provider)
-        selected_reference_id = _default_available_layer(records, layer_state["reference_registry"], "reference_layer_id")
-        selected_reference_id = selected_reference_id or layer_state.get("basemap_reference_layer_id")
+        selected_reference_id = layer_state.get("basemap_reference_layer_id")
+        selected_reference_id = selected_reference_id or _default_available_layer(records, layer_state["reference_registry"], "reference_layer_id")
         selected_historical_id = _default_available_layer(records, layer_state["historical_registry"], "historical_layer_id")
         if selected_historical_id is None and layer_state["historical_registry"]:
             selected_historical_id = str(layer_state["historical_registry"][0]["db_layer_id"])

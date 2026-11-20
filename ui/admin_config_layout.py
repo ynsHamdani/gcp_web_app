@@ -30,13 +30,14 @@ def create_admin_config_layout(*, settings: dict, gcp_crs: str, admin_username: 
                     id="admin-config-basemap-provider",
                     options=[
                         {"label": "CARTO Voyager (recommended)", "value": "carto"},
-                        {"label": "OpenStreetMap standard tiles", "value": "osm"},
+                        {"label": "OpenStreetMap standard tiles", "value": "osm"}, 
                     ],
                     value=settings.get("basemap_provider", "carto"),
                     clearable=False,
                     searchable=False,
                 ),
                 html.P(carto_status, style={"fontSize": "12px", "color": "#166534" if carto_api_key_configured else "#92400e", "margin": "8px 0 0"}),
+                html.P("OpenStreetMap standard tiles are volunteer-operated, best-effort infrastructure. They require compliant identification, a valid cross-origin Referer and caching, and may be blocked if usage does not meet the tile policy. For reliable institutional use, prefer CARTO or a dedicated tile provider.", style={"fontSize": "11px", "color": "#92400e", "margin": "7px 0 0", "lineHeight": "1.45"}),
                 html.P("Provider changes are saved in PostgreSQL and take effect when the GCP Workspace or student page is opened/refreshed. Attribution is included on both maps.", style={"fontSize": "11px", "color": "#64748b", "margin": "6px 0 0"}),
             ]),
             html.Section(style={**_CARD, "marginTop": "12px"}, children=[

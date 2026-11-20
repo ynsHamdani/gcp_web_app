@@ -10,6 +10,7 @@ prj_str.txt
 *.phase1_semantic_context_backups/
 *.pytest_cache/
 *.mypy_cache/
+*.phase1_1_semantic_gcp_backups/
 
 # Local database credentials
 config.yaml

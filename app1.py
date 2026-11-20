@@ -153,4 +153,4 @@ admin_dash_app = mount_admin_dashboard(
 # =========================================================
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, dev_tools_ui=False)

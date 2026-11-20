@@ -141,7 +141,7 @@ def init_auth(server, user_store, *, secret_key: str, raster_signing_key: str | 
     @server.after_request
     def add_security_headers(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         if request.path.startswith("/admin/") or request.path in {"/login", "/change-password"}:
             response.headers.setdefault("Cache-Control", "no-store")

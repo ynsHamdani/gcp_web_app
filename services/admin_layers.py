@@ -10,7 +10,7 @@ permanently available reference option and is already provided by the map.
 from typing import Any
 
 from config import TITILER_URL
-from maps.map_views import build_layer_children
+from maps.map_views import build_layer_children, resolve_basemap_provider
 from maps.raster import (
     RasterAsset,
     calculate_fit_zoom,
@@ -20,7 +20,7 @@ from maps.raster import (
 )
 
 
-def build_admin_layer_state(layer_store) -> dict[str, Any]:
+def build_admin_layer_state(layer_store, basemap_provider: str | None = None) -> dict[str, Any]:
     """Return available registries, selector options, and availability warnings.
 
     ``historical_options`` intentionally contains unavailable historical
@@ -29,6 +29,8 @@ def build_admin_layer_state(layer_store) -> dict[str, Any]:
     and therefore never offers an unavailable raster.
     """
 
+    effective_provider = resolve_basemap_provider(basemap_provider)
+    basemap_label = "CARTO Voyager" if effective_provider == "carto" else "OpenStreetMap"
     layers = layer_store.list()
     registries: dict[str, list[dict]] = {"reference": [], "historical": []}
     historical_options: list[dict[str, str]] = []
@@ -45,12 +47,12 @@ def build_admin_layer_state(layer_store) -> dict[str, Any]:
             and layer.get("source_type") == "basemap"
         ):
             layer_id = str(layer.get("layer_id", ""))
-            filename = str(layer.get("filename") or "OpenStreetMap")
+            filename = f"{basemap_label} (basemap)"
             if layer_id:
                 basemap_reference_layer_id = basemap_reference_layer_id or layer_id
                 reference_options.append(
                     {
-                        "label": f"{filename} (basemap)",
+                        "label": filename,
                         "value": layer_id,
                     }
                 )
@@ -136,6 +138,8 @@ def build_admin_layer_state(layer_store) -> dict[str, Any]:
         "available_historical_options": available_historical_options,
         "unavailable_layers": unavailable,
         "basemap_reference_layer_id": basemap_reference_layer_id,
+        "basemap_label": basemap_label,
+        "basemap_provider": effective_provider,
     }
 
 

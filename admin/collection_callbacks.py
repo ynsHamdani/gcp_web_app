@@ -44,7 +44,8 @@ def _selected_entries(layer_state: dict, loaded_selection: dict):
     historical_registry = layer_state.get("historical_registry") or []
 
     if not _reference_is_available(layer_state, reference_db_id):
-        raise ValueError("Select an available reference layer. OpenStreetMap is valid and does not need to be uploaded.")
+        basemap_label = str(layer_state.get("basemap_label") or "Configured basemap")
+        raise ValueError(f"Select an available reference layer. {basemap_label} is valid and does not need to be uploaded.")
 
     historical_entry = _registry_entry_by_db_id(historical_registry, historical_db_id)
     if historical_entry is None:
@@ -272,7 +273,7 @@ def register_admin_collection_callbacks(app, gcp_store):
                     historical_layer_id=selected["historical_db_id"],
                 )
                 if context_category_id in (None, ""):
-                    raise ValueError("Choose a GCP context category before confirming.")
+                    raise ValueError("GCP context is required. Select a category in the GCP context field before confirming; this point has not been saved.")
                 saved = gcp_store.create(
                     record, context_category_id=int(context_category_id),
                     context_remark=context_remark,
@@ -321,3 +322,17 @@ def register_admin_collection_callbacks(app, gcp_store):
             build_admin_pending_markers(pending, "reference"),
             build_admin_pending_markers(pending, "historical"),
         )
+
+
+    @app.callback(
+        Output("admin-gcp-context-status", "children"),
+        Input("admin-confirm-gcp-button", "n_clicks"),
+        Input("admin-gcp-context-category", "value"),
+        prevent_initial_call=True,
+    )
+    def validate_admin_context_selection(confirm_clicks, category_id):
+        del confirm_clicks
+        _require_admin()
+        if ctx.triggered_id == "admin-confirm-gcp-button" and category_id in (None, ""):
+            return "GCP context is required. Select a category above, then confirm again. The pending GCP has not been saved."
+        return ""

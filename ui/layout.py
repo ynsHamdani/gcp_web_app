@@ -99,7 +99,7 @@ def create_gcp_table(initial_rows=None):
         ],
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
         dashGridOptions={"animateRows": False, "rowSelection": {"mode": "singleRow"}},
-        style={"height": "170px", "width": "100%"},
+        style={"height": "100%", "width": "100%", "minHeight": "0"},
     )
 
 
@@ -148,6 +148,7 @@ def create_layout(reference_map, historical_map, initial_rows=None, auth_usernam
                 ],
             ),
             html.Div(
+                className="table-toolbar",
                 children=[
                     html.Button("Export my GCPs (CSV)", id="student-export-gcps", n_clicks=0, className="secondary-button"),
                     dcc.Download(id="student-gcp-download"),

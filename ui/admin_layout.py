@@ -150,6 +150,7 @@ def create_admin_layout(
         "cursor": "pointer",
     }
     basemap_id = str(layer_state.get("basemap_reference_layer_id") or "")
+    basemap_label = str(layer_state.get("basemap_label") or "Configured basemap")
     selected_ref_is_basemap = bool(selected_reference_layer_id and basemap_id and str(selected_reference_layer_id) == basemap_id)
     initial_loaded = {
         "reference_loaded_db_layer_id": str(selected_reference_layer_id) if selected_reference_layer_id else None,
@@ -312,7 +313,7 @@ def create_admin_layout(
                             html.Span("Click reference map; drag the historical marker to refine.", style=muted),
                         ],
                     ),
-                    html.Div(id="admin-gcp-collection-status", children=("OpenStreetMap is active as the reference support. Load and Zoom a historical raster to enable collection." if selected_ref_is_basemap else "Activate one reference and one historical layer with their Zoom buttons to enable collection."), role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "6px"}),
+                    html.Div(id="admin-gcp-collection-status", children=(f"{basemap_label} is active as the reference support. Load and Zoom a historical raster to enable collection." if selected_ref_is_basemap else "Activate one reference and one historical layer with their Zoom buttons to enable collection."), role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "6px"}),
                 ],
             ),
 
