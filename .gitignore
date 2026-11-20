@@ -7,6 +7,9 @@ data/
 *.tiff
 *.log
 prj_str.txt
+*.phase1_semantic_context_backups/
+*.pytest_cache/
+*.mypy_cache/
 
 # Local database credentials
 config.yaml
