@@ -51,6 +51,7 @@ def create_admin_header(*, admin_username: str, csrf_token: str, active_page: st
         ("workspace", "GCP Workspace", "/admin/"),
         ("users", "User Management", "/admin/users/"),
         ("config", "Configuration", "/admin/config/"),
+        ("coverage", "Coverage & Statistics", "/admin/coverage/"),
     ]
     links = []
     for key, label, href in pages:
@@ -149,6 +150,7 @@ def create_workspace_header(*, admin_username: str, csrf_token: str):
     page_links = [
         html.A("Users", href="/admin/users/", style={**_NAV_LINK, "color": "#334155"}),
         html.A("Configuration", href="/admin/config/", style={**_NAV_LINK, "color": "#334155"}),
+        html.A("Coverage & Statistics", href="/admin/coverage/", style={**_NAV_LINK, "color": "#334155"}),
     ]
     return html.Header(
         id="admin-global-header",

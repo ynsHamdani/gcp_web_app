@@ -9,6 +9,7 @@ from flask_wtf.csrf import generate_csrf
 
 from admin.collection_callbacks import register_admin_collection_callbacks
 from admin.config_dashboard import mount_admin_config_dashboard
+from admin.coverage_dashboard import mount_coverage_dashboard
 from admin.gcp_callbacks import register_admin_gcp_callbacks
 from admin.layer_callbacks import register_admin_layer_callbacks
 from admin.users_dashboard import mount_admin_users_dashboard
@@ -120,5 +121,6 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
     # These are distinct Dash applications sharing the same protected Flask server.
     users_app = mount_admin_users_dashboard(server=server, auth_store=auth_store)
     config_app = mount_admin_config_dashboard(server=server, settings_store=settings_store, auth_store=auth_store, context_store=context_store)
-    server.extensions["gcp_admin_apps"] = {"workspace": admin_app, "users": users_app, "config": config_app}
+    coverage_app = mount_coverage_dashboard(server=server, auth_store=auth_store)
+    server.extensions["gcp_admin_apps"] = {"workspace": admin_app, "users": users_app, "config": config_app, "coverage": coverage_app}
     return admin_app
