@@ -1,22 +1,31 @@
-/* Polygon/GCP styling and safe popups for the Coverage & Statistics map. */
+/* Polygon/GCP styling and safe popups for the Coverage & Statistics map.
+   Selection is kept outside GeoJSON props so dropdown interaction cannot
+   re-render the polygon layer and close its popup. */
 (function () {
     window.coverageMap = window.coverageMap || {};
+
+    function basePolygonStyle(feature) {
+        const p = (feature && feature.properties) || {};
+        const count = Number(p.assigned_count || 0);
+        let fill = "#e2e8f0";
+        if (count > 0 && count <= 5) fill = "#bfdbfe";
+        else if (count <= 20 && count > 5) fill = "#60a5fa";
+        else if (count > 20) fill = "#2563eb";
+        return { color: "#334155", weight: 1, fillColor: fill, fillOpacity: 0.35 };
+    }
+
+    window.coverageMap.clearSelectedPolygon = function () {
+        const previous = window.coverageMap._selectedPolygon;
+        if (previous && typeof previous.setStyle === "function") {
+            previous.setStyle(window.coverageMap._selectedPolygonBaseStyle || {});
+        }
+        window.coverageMap._selectedPolygon = null;
+        window.coverageMap._selectedPolygonBaseStyle = null;
+    };
+
     window.coverageMap.handlers = Object.assign({}, window.coverageMap.handlers || {}, {
-        polygonStyle: function (feature, context) {
-            const p = (feature && feature.properties) || {};
-            const hideout = (context && context.hideout) || {};
-            const selected = String(hideout.selected_feature_id || "") === String(p.coverage_feature_id || feature.id || "");
-            const count = Number(p.assigned_count || 0);
-            let fill = "#e2e8f0";
-            if (count > 0 && count <= 5) fill = "#bfdbfe";
-            else if (count <= 20 && count > 5) fill = "#60a5fa";
-            else if (count > 20) fill = "#2563eb";
-            return {
-                color: selected ? "#c2410c" : "#334155",
-                weight: selected ? 3 : 1,
-                fillColor: selected ? "#fb923c" : fill,
-                fillOpacity: selected ? 0.58 : 0.35
-            };
+        polygonStyle: function (feature) {
+            return basePolygonStyle(feature);
         },
         pointToLayer: function (feature, latlng) {
             const p = (feature && feature.properties) || {};
@@ -25,31 +34,62 @@
             if (p.assignment_reason === "MULTIPLE_MATCHES") color = "#dc2626";
             return L.circleMarker(latlng, { radius: 5, color: "#ffffff", weight: 1, fillColor: color, fillOpacity: 0.95 });
         },
-        onEachPolygon: function (feature, layer, context) {
+        onEachPolygon: function (feature, layer) {
             const p = (feature && feature.properties) || {};
             const label = p.feature_label || p.source_feature_key || "Coverage feature";
+            const featureId = Number(p.coverage_feature_id || feature.id);
+            const layerId = Number(p.coverage_layer_id);
+            const normalStyle = basePolygonStyle(feature);
+
             layer.bindTooltip(String(label), { sticky: true, direction: "top" });
             layer.on("click", function (event) {
                 if (event && event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
-                if (context && typeof context.setProps === "function") {
-                    context.setProps({clickData: {
-                        feature: feature,
-                        click_time: Date.now()
-                    }});
+
+                // Highlight the selected polygon directly in Leaflet. Do not
+                // update GeoJSON.hideout: changing that prop rebuilds the
+                // layer and can dismiss its popup/lose the click state.
+                window.coverageMap.clearSelectedPolygon();
+                window.coverageMap._selectedPolygon = layer;
+                window.coverageMap._selectedPolygonBaseStyle = normalStyle;
+                layer.setStyle({
+                    color: "#c2410c", weight: 3,
+                    fillColor: "#fb923c", fillOpacity: 0.58
+                });
+
+                // The stable Dash Store is the assignment workflow's source
+                // of truth. The student dropdown does not participate in map
+                // selection and therefore cannot clear the selected feature.
+                if (featureId > 0 && layerId > 0 && window.dash_clientside
+                    && typeof window.dash_clientside.set_props === "function") {
+                    window.dash_clientside.set_props("coverage-selected-feature", {
+                        data: {
+                            coverage_feature_id: featureId,
+                            coverage_layer_id: layerId,
+                            click_nonce: Date.now()
+                        }
+                    });
+                } else {
+                    console.warn("Coverage polygon selection could not be sent to Dash: missing feature/layer ID or set_props API.");
                 }
+
+                // Build popup content with textContent, never interpolated HTML.
                 const root = document.createElement("div");
                 const title = document.createElement("strong");
                 title.textContent = String(label);
                 root.appendChild(title);
-                [["Feature ID", p.coverage_feature_id], ["Source key", p.source_feature_key], ["Uniquely assigned GCPs", p.assigned_count]].forEach(function (entry) {
+                [
+                    ["Feature ID", featureId],
+                    ["Source key", p.source_feature_key],
+                    ["Uniquely assigned GCPs", p.assigned_count]
+                ].forEach(function (entry) {
                     const line = document.createElement("div");
                     line.textContent = `${entry[0]}: ${entry[1] == null ? "" : entry[1]}`;
                     root.appendChild(line);
                 });
-                const context = p.context_breakdown || {};
+                const contextBreakdown = p.context_breakdown || {};
                 const contextLine = document.createElement("div");
-                contextLine.textContent = "GCP context: " + (Object.keys(context).length
-                    ? Object.entries(context).map(([label, count]) => `${label}: ${count}`).join("; ")
+                contextLine.textContent = "GCP context: " + (Object.keys(contextBreakdown).length
+                    ? Object.entries(contextBreakdown).map(([name, count]) => `${name}: ${count}`).join("; ")
                     : "—");
                 root.appendChild(contextLine);
                 const attrs = p.attributes || {};
@@ -81,7 +121,6 @@
         }
     });
 })();
-
 
 /* Dismissible Coverage notifications: remove only the clicked alert. */
 (function () {

@@ -181,9 +181,8 @@ def create_admin_coverage_layout(
     coverage_map_controls[0].children = [
         *list(coverage_map_controls[0].children or []),
         dl.Overlay(
-            dl.GeoJSON(id="coverage-polygons", data=_EMPTY_FC, clickData=None,
-                       style=coverage_ns("polygonStyle"), onEachFeature=coverage_ns("onEachPolygon"),
-                       hideout={"selected_feature_id": None}),
+            dl.GeoJSON(id="coverage-polygons", data=_EMPTY_FC,
+                       style=coverage_ns("polygonStyle"), onEachFeature=coverage_ns("onEachPolygon")),
             name="Coverage polygons", checked=True,
         ),
         dl.Overlay(

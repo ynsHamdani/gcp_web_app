@@ -387,9 +387,17 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
                     f"This view contains more than {result['feature_count_in_view'] - 1:,} polygons. "
                     "Zoom in to load a clearer, complete view; the application will not silently show only part of the layer."
                 )
+            # Include the selected layer version in every feature payload so
+            # the browser can store a stable (feature_id, layer_id) selection
+            # without changing GeoJSON component props or resetting its popup.
+            polygons = result["polygons"]
+            for polygon in polygons.get("features", []):
+                properties = polygon.setdefault("properties", {})
+                properties["coverage_layer_id"] = int(layer_id)
+
             point_note = " GCP markers were capped at 3,000 in this view." if result.get("points_limited") else ""
             return (
-                result["polygons"], result["points"],
+                polygons, result["points"],
                 f"Showing {result['feature_count_in_view']:,} polygon(s) and {len(result['points']['features']):,} GCP(s) in the current viewport.{point_note}",
             )
         except Exception as exc:

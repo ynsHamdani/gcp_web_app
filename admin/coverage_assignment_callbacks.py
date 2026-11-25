@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
-
-from dash import Input, Output, State, ctx, html, no_update
+from dash import Input, Output, State, html, no_update
 from flask import abort
 from flask_login import current_user
 
@@ -14,7 +12,6 @@ def _require_admin() -> int:
 
 
 def _alert(message: str, *, success: bool):
-    level = "success" if success else "error"
     colors = (
         {"background": "#f0fdf4", "border": "1px solid #bbf7d0", "color": "#166534"}
         if success else
@@ -30,56 +27,60 @@ def _alert(message: str, *, success: bool):
     )
 
 
-def _feature_from_click(click_data: dict | None) -> int | None:
-    if not isinstance(click_data, dict):
-        return None
-    feature = click_data.get("feature") or {}
-    if not isinstance(feature, dict):
-        return None
-    props = feature.get("properties") or {}
-    raw = props.get("coverage_feature_id", feature.get("id"))
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return None
-    return value if value > 0 else None
-
-
 def register_coverage_assignment_callbacks(app, assignment_store, auth_store) -> None:
-    """Manage one selected polygon's one-to-many student assignments."""
+    """Manage one selected polygon's one-to-many student assignments.
+
+    The map writes the selected polygon ID into a dedicated dcc.Store from its
+    Leaflet click handler. This callback only reads that stable selection and
+    loads the current student assignments; it does not update GeoJSON props.
+    Keeping map rendering out of this callback prevents popup/highlight loss
+    when the assignment dropdown is used.
+    """
 
     @app.callback(
-        Output("coverage-selected-feature", "data"),
         Output("coverage-selected-feature-label", "children"),
         Output("coverage-assignment-students", "value"),
-        Output("coverage-polygons", "hideout"),
-        Input("coverage-polygons", "clickData"),
-        Input("coverage-analysis-layer", "value"),
-        State("coverage-selected-feature", "data"),
+        Input("coverage-selected-feature", "data"),
         prevent_initial_call=True,
     )
-    def select_polygon(click_data, layer_id, previous_selection):
+    def load_selected_polygon_assignments(selection):
         _require_admin()
-        if ctx.triggered_id == "coverage-analysis-layer":
-            return None, "Coverage version changed. Select a polygon to manage its assignments.", [], {"selected_feature_id": None}
-        feature_id = _feature_from_click(click_data)
-        if feature_id is None or not layer_id:
-            return no_update, no_update, no_update, no_update
-        feature = assignment_store.get_feature_for_assignment(feature_id, int(layer_id))
+        if not selection:
+            return "No polygon selected. Click a polygon on the map to manage its assignments.", []
+
+        try:
+            feature_id = int(selection.get("coverage_feature_id"))
+            layer_id = int(selection.get("coverage_layer_id"))
+            if feature_id <= 0 or layer_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return "The selected polygon reference is invalid. Select it again on the map.", []
+
+        feature = assignment_store.get_feature_for_assignment(feature_id, layer_id)
         if feature is None:
-            return None, "The clicked polygon is not available in the selected active coverage version. Refresh the map and select it again.", [], {"selected_feature_id": None}
-        attrs = feature.get("attributes") or {}
+            return (
+                "The selected polygon is no longer available in this active coverage version. "
+                "Refresh the map and select it again.",
+                [],
+            )
+
         label = feature.get("feature_label") or feature.get("source_feature_key") or f"Feature {feature_id}"
         summary = (
             f"Selected: {feature['layer_name']} · v{feature['version']} · {label} "
             f"(feature ID {feature_id}). The dropdown shows the current assignments."
         )
-        return (
-            {"coverage_feature_id": feature_id, "coverage_layer_id": int(layer_id)},
-            summary,
-            [str(value) for value in feature["assigned_student_ids"]],
-            {"selected_feature_id": str(feature_id)},
-        )
+        return summary, [str(value) for value in feature.get("assigned_student_ids", [])]
+
+    # Clear the persistent selection when the administrator changes coverage
+    # versions. The map data itself is refreshed by the existing map callback.
+    @app.callback(
+        Output("coverage-selected-feature", "data"),
+        Input("coverage-analysis-layer", "value"),
+        prevent_initial_call=True,
+    )
+    def clear_selection_on_layer_change(_layer_id):
+        _require_admin()
+        return None
 
     @app.callback(
         Output("coverage-assignment-save", "disabled"),
@@ -87,7 +88,12 @@ def register_coverage_assignment_callbacks(app, assignment_store, auth_store) ->
         Input("coverage-assignment-saving", "data"),
     )
     def set_assignment_save_enabled(selection, saving):
-        return not bool(selection and selection.get("coverage_feature_id") and not saving)
+        valid_selection = bool(
+            isinstance(selection, dict)
+            and selection.get("coverage_feature_id")
+            and selection.get("coverage_layer_id")
+        )
+        return not (valid_selection and not bool(saving))
 
     @app.callback(
         Output("coverage-assignment-save-status", "children"),
@@ -108,9 +114,9 @@ def register_coverage_assignment_callbacks(app, assignment_store, auth_store) ->
         actor_id = _require_admin()
         if not selection:
             return _alert("Select a polygon on the map first.", success=False)
-        feature_id = int(selection["coverage_feature_id"])
-        layer_id = int(selection["coverage_layer_id"])
         try:
+            feature_id = int(selection["coverage_feature_id"])
+            layer_id = int(selection["coverage_layer_id"])
             selected_ids = assignment_store.replace_feature_assignments(
                 feature_id=feature_id,
                 layer_id=layer_id,
@@ -126,8 +132,8 @@ def register_coverage_assignment_callbacks(app, assignment_store, auth_store) ->
                     {"coverage_layer_id": layer_id, "student_ids": selected_ids},
                 )
             except Exception:
-                # Audit logging must not roll back or make a valid assignment
-                # appear to have failed after the database transaction commits.
+                # Audit logging must not make a committed assignment appear
+                # to have failed.
                 pass
             if not selected_ids:
                 return _alert(f"All student assignments were removed from polygon {feature_id}.", success=True)

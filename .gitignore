@@ -14,6 +14,7 @@ prj_str.txt
 *.phase2_3_2_4_backups/
 *.phase2_1_2_2_backups/
 *.phase2_4_1_2_5_backups/
+*.phase2_5_1_backups/
 
 # Local database credentials
 config.yaml
