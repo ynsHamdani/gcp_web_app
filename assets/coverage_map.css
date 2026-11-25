@@ -1,0 +1,11 @@
+.coverage-spinner {
+    width: 17px;
+    height: 17px;
+    border: 2px solid #bfdbfe;
+    border-top-color: #1d4ed8;
+    border-radius: 50%;
+    display: inline-block;
+    box-sizing: border-box;
+    animation: coverage-spin 0.8s linear infinite;
+}
+@keyframes coverage-spin { to { transform: rotate(360deg); } }
