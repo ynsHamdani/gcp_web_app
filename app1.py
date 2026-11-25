@@ -19,6 +19,8 @@ from callbacks.raster import (
     register_raster_callbacks,
     register_raster_routes,
 )
+from callbacks.student_coverage import register_student_coverage_callbacks
+from maps.student_coverage import install_student_coverage_overlays
 from database.db import close_db_pool, get_db_pool
 from maps.map_views import (
     create_historical_map,
@@ -80,6 +82,7 @@ atexit.register(close_db_pool)
 
 
 def serve_layout():
+    student_coverage_layers = []
     # Dash may evaluate the layout once at startup without a request.
     # Only read Flask-Login/session state inside a request context.
     if has_request_context() and current_user.is_authenticated:
@@ -102,6 +105,11 @@ def serve_layout():
         initial_gcp_records = gcp_store.list_for_student(
             int(current_user.get_id())
         )
+        assignment_store = app.server.extensions.get("gcp_coverage_assignment_store")
+        if assignment_store is not None:
+            student_coverage_layers = assignment_store.list_student_layers(
+                int(current_user.get_id())
+            )
     initial_gcp_rows = [
         gcp_table_row(record)
         for record in initial_gcp_records
@@ -110,6 +118,8 @@ def serve_layout():
     basemap_provider = get_runtime_setting("basemap_provider", "carto")
     reference_map = create_reference_map(basemap_provider)
     historical_map = create_historical_map(basemap_provider)
+    install_student_coverage_overlays(reference_map, student_coverage_layers, "reference")
+    install_student_coverage_overlays(historical_map, student_coverage_layers, "historical")
     return create_app_layout(
         reference_map=reference_map,
         historical_map=historical_map,
@@ -119,6 +129,7 @@ def serve_layout():
         auth_role=auth_role,
         csrf_token=csrf_token,
         context_categories=context_store.list_active() if auth_role == "student" else [],
+        student_coverage_layers=student_coverage_layers,
     )
 
 
@@ -146,6 +157,12 @@ admin_dash_app = mount_admin_dashboard(
     layer_store=reference_layer_store,
     auth_store=auth_store,
 )
+
+# The Coverage dashboard creates this store on the shared Flask server.
+# Register student viewport callbacks only after that extension exists.
+coverage_assignment_store = app.server.extensions.get("gcp_coverage_assignment_store")
+if coverage_assignment_store is not None:
+    register_student_coverage_callbacks(app, coverage_assignment_store)
 
 
 # =========================================================

@@ -116,6 +116,7 @@ def create_app_layout(
     auth_role=None,
     csrf_token=None,
     context_categories=None,
+    student_coverage_layers=None,
 ):
     """Build the complete application layout."""
 
@@ -136,6 +137,7 @@ def create_app_layout(
                 auth_role=auth_role,
                 csrf_token=csrf_token,
                 context_categories=context_categories,
+                student_coverage_layers=student_coverage_layers,
             ),
             *create_zoom_controls(),
 

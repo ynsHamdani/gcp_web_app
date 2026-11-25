@@ -103,7 +103,7 @@ def create_gcp_table(initial_rows=None):
     )
 
 
-def create_layout(reference_map, historical_map, initial_rows=None, auth_username=None, auth_role=None, csrf_token=None, context_categories=None):
+def create_layout(reference_map, historical_map, initial_rows=None, auth_username=None, auth_role=None, csrf_token=None, context_categories=None, student_coverage_layers=None):
     """Build the main student page with a one-click GCP records refresh."""
     gcp_table = create_gcp_table(initial_rows=initial_rows)
     return html.Div(
@@ -148,6 +148,14 @@ def create_layout(reference_map, historical_map, initial_rows=None, auth_usernam
                 ],
             ),
             html.Div(
+                id="student-coverage-status",
+                children=[
+                    html.Div(id="student-reference-coverage-status"),
+                    html.Div(id="student-historical-coverage-status"),
+                ],
+                style={"fontSize": "11px", "color": "#64748b", "display": "flex", "justifyContent": "space-between", "gap": "12px", "flexWrap": "wrap", "padding": "3px 2px"},
+            ),
+            html.Div(
                 className="table-toolbar",
                 children=[
                     html.Button("Export my GCPs (CSV)", id="student-export-gcps", n_clicks=0, className="secondary-button"),
@@ -175,6 +183,7 @@ def create_layout(reference_map, historical_map, initial_rows=None, auth_usernam
                     gcp_table,
                 ],
             ),
+            dcc.Store(id="student-coverage-layer-registry", data=student_coverage_layers or []),
             dcc.Store(id="gcp-pending", data=None),
             dcc.Store(id="gcp-records", data=initial_rows or []),
             dcc.Store(id="gcp-selected-id", data=None),

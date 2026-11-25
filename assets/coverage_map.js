@@ -2,14 +2,21 @@
 (function () {
     window.coverageMap = window.coverageMap || {};
     window.coverageMap.handlers = Object.assign({}, window.coverageMap.handlers || {}, {
-        polygonStyle: function (feature) {
+        polygonStyle: function (feature, context) {
             const p = (feature && feature.properties) || {};
+            const hideout = (context && context.hideout) || {};
+            const selected = String(hideout.selected_feature_id || "") === String(p.coverage_feature_id || feature.id || "");
             const count = Number(p.assigned_count || 0);
             let fill = "#e2e8f0";
             if (count > 0 && count <= 5) fill = "#bfdbfe";
             else if (count <= 20 && count > 5) fill = "#60a5fa";
             else if (count > 20) fill = "#2563eb";
-            return { color: "#334155", weight: 1, fillColor: fill, fillOpacity: 0.35 };
+            return {
+                color: selected ? "#c2410c" : "#334155",
+                weight: selected ? 3 : 1,
+                fillColor: selected ? "#fb923c" : fill,
+                fillOpacity: selected ? 0.58 : 0.35
+            };
         },
         pointToLayer: function (feature, latlng) {
             const p = (feature && feature.properties) || {};
@@ -18,11 +25,18 @@
             if (p.assignment_reason === "MULTIPLE_MATCHES") color = "#dc2626";
             return L.circleMarker(latlng, { radius: 5, color: "#ffffff", weight: 1, fillColor: color, fillOpacity: 0.95 });
         },
-        onEachPolygon: function (feature, layer) {
+        onEachPolygon: function (feature, layer, context) {
             const p = (feature && feature.properties) || {};
             const label = p.feature_label || p.source_feature_key || "Coverage feature";
             layer.bindTooltip(String(label), { sticky: true, direction: "top" });
-            layer.on("click", function () {
+            layer.on("click", function (event) {
+                if (event && event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+                if (context && typeof context.setProps === "function") {
+                    context.setProps({clickData: {
+                        feature: feature,
+                        click_time: Date.now()
+                    }});
+                }
                 const root = document.createElement("div");
                 const title = document.createElement("strong");
                 title.textContent = String(label);
@@ -66,4 +80,67 @@
             });
         }
     });
+})();
+
+
+/* Dismissible Coverage notifications: remove only the clicked alert. */
+(function () {
+    if (window.__coverageDismissHandlerInstalled) return;
+    window.__coverageDismissHandlerInstalled = true;
+    document.addEventListener("click", function (event) {
+        const button = event.target && event.target.closest ? event.target.closest(".coverage-alert-close") : null;
+        if (!button) return;
+        const alert = button.closest(".coverage-dismissible-alert");
+        if (alert) alert.remove();
+    });
+})();
+
+/* Freeze background scrolling while the permanent-delete modal is open.
+   Observe only the modal's style after it is mounted; do not watch every page
+   mutation or every style change in the Coverage workspace. */
+(function () {
+    if (window.__coverageModalObserverInstalled) return;
+    // The shared assets folder is also loaded by the student and other admin
+    // Dash apps. The modal exists only on this page, so do not observe those pages.
+    if (!String(window.location.pathname || "").startsWith("/admin/coverage/")) return;
+    window.__coverageModalObserverInstalled = true;
+
+    let previousOverflow = null;
+    let modalObserver = null;
+    let mountObserver = null;
+
+    const sync = function () {
+        const modal = document.getElementById("coverage-delete-dialog");
+        const open = !!(modal && modal.style.display === "flex");
+        if (open) {
+            if (previousOverflow === null) previousOverflow = document.body.style.overflow;
+            document.body.style.overflow = "hidden";
+        } else if (previousOverflow !== null) {
+            document.body.style.overflow = previousOverflow;
+            previousOverflow = null;
+        }
+    };
+
+    const attach = function () {
+        const modal = document.getElementById("coverage-delete-dialog");
+        if (modal) {
+            if (mountObserver) mountObserver.disconnect();
+            modalObserver = new MutationObserver(sync);
+            modalObserver.observe(modal, { attributes: true, attributeFilter: ["style"] });
+            sync();
+            return true;
+        }
+        return false;
+    };
+
+    const start = function () {
+        if (attach()) return;
+        mountObserver = new MutationObserver(function () {
+            attach();
+        });
+        mountObserver.observe(document.body, { childList: true, subtree: true });
+    };
+
+    if (document.body) start();
+    else document.addEventListener("DOMContentLoaded", start, { once: true });
 })();

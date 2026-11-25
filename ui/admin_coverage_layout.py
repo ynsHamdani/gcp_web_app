@@ -74,6 +74,7 @@ def create_admin_coverage_layout(
     target_srid: int = 25832,
     selected_layer_id: str | None = None,
     initial_map_bounds=None,
+    students: list[dict] | None = None,
 ):
     management_options = [
         {"label": f"{item['layer_name']} · v{item['version']} · " + ("Suppressed" if item.get("is_suppressed") else "Active" if item.get("is_active") else "Archived"), "value": str(item["coverage_layer_id"])}
@@ -85,6 +86,14 @@ def create_admin_coverage_layout(
         selected_layer_id = analysis_options[0]["value"]
     managed_id = management_options[0]["value"] if management_options else None
     coverage_ns = Namespace("coverageMap", "handlers")
+    student_options = [
+        {
+            "label": f"{item.get('username', 'Student')} · {item.get('email', '')}" + (" · inactive" if not item.get("is_active", True) else ""),
+            "value": str(item["user_id"]),
+            "disabled": not bool(item.get("is_active", True)),
+        }
+        for item in (students or [])
+    ]
 
     upload_card = html.Section(
         style=_CARD_STYLE,
@@ -111,13 +120,14 @@ def create_admin_coverage_layout(
             ], style={"marginBottom": "14px"}),
             html.Div([
                 html.Button("1. Validate and prepare", id="coverage-validate-button", n_clicks=0, style={**_BUTTON_STYLE, "background": "#e2e8f0", "color": "#1e293b"}),
-                html.Button("2. Publish coverage layer", id="coverage-publish-button", n_clicks=0, style={**_BUTTON_STYLE, "background": "#1d4ed8", "color": "#ffffff", "marginLeft": "8px"}),
+                html.Button("2. Publish coverage layer", id="coverage-publish-button", n_clicks=0, disabled=True, style={**_BUTTON_STYLE, "background": "#1d4ed8", "color": "#ffffff", "marginLeft": "8px"}),
             ], style={"display": "flex", "flexWrap": "wrap", "gap": "6px", "alignItems": "center"}),
             html.Div(id="coverage-publish-loading", children=[html.Span(className="coverage-spinner"), html.Span("Publishing prepared features to the database. Please do not click again.")], style={"display": "none", "alignItems": "center", "gap": "10px", "fontSize": "12px", "color": "#1d4ed8", "marginTop": "12px"}),
             dcc.Loading(html.Div(id="coverage-validation-report", style={"marginTop": "14px"}), type="circle"),
             html.Div(id="coverage-publish-status", style={"marginTop": "10px", "fontSize": "12px"}),
             dcc.Store(id="coverage-validation-state", data=None),
             dcc.Store(id="coverage-published-event", data=None),
+            dcc.Store(id="coverage-publishing-state", data=False),
         ],
     )
 
@@ -142,15 +152,46 @@ def create_admin_coverage_layout(
                 ], style={"flex": "1 1 330px", "minWidth": "240px"}),
                 html.Div([
                     html.Button("Suppress", id="coverage-suppress-button", n_clicks=0, style={**_BUTTON_STYLE, "background": "#ffedd5", "color": "#9a3412"}),
-                    html.Button("Reactivate / make active", id="coverage-reactivate-button", n_clicks=0, style={**_BUTTON_STYLE, "background": "#dbeafe", "color": "#1d4ed8", "marginLeft": "6px"}),
+                    html.Button("Reactivate / make active", id="coverage-reactivate-button", n_clicks=0, disabled=True, style={**_BUTTON_STYLE, "background": "#dbeafe", "color": "#1d4ed8", "marginLeft": "6px"}),
                     html.Button("Delete permanently", id="coverage-delete-button", n_clicks=0, style={**_BUTTON_STYLE, "background": "#fee2e2", "color": "#991b1b", "marginLeft": "6px"}),
                 ], style={"display": "flex", "flexWrap": "wrap", "alignItems": "center"}),
             ], style={"display": "flex", "alignItems": "end", "flexWrap": "wrap", "gap": "12px", "marginTop": "14px"}),
             html.Div(id="coverage-management-status", style={"fontSize": "12px", "marginTop": "9px", "color": "#475569"}),
-            dcc.ConfirmDialog(id="coverage-delete-confirm", message="Delete this coverage version?"),
+            html.Div(
+                id="coverage-delete-dialog", className="coverage-modal-backdrop",
+                role="presentation", style={"display": "none"},
+                children=html.Div(
+                    className="coverage-modal-card", role="dialog", **{"aria-modal": "true", "aria-labelledby": "coverage-delete-title"},
+                    children=[
+                        html.Button("×", id="coverage-delete-cancel-x", n_clicks=0, className="coverage-modal-close", **{"aria-label": "Cancel deletion"}),
+                        html.H3("Delete coverage version?", id="coverage-delete-title", style={"fontSize": "17px", "margin": "0 28px 10px 0", "color": "#172033"}),
+                        html.Div(id="coverage-delete-message", style={"fontSize": "13px", "lineHeight": "1.55", "color": "#475569"}),
+                        html.Div([
+                            html.Button("Cancel", id="coverage-delete-cancel", n_clicks=0, style={**_BUTTON_STYLE, "background": "#f1f5f9", "color": "#334155"}),
+                            html.Button("Delete permanently", id="coverage-delete-confirm-button", n_clicks=0, style={**_BUTTON_STYLE, "background": "#b91c1c", "color": "#ffffff"}),
+                        ], style={"display": "flex", "justifyContent": "flex-end", "gap": "8px", "marginTop": "20px"}),
+                    ],
+                ),
+            ),
             dcc.Store(id="coverage-delete-target", data=None),
         ],
     )
+
+    coverage_map_controls = create_layers_control("coverage-map-layer-control")
+    coverage_map_controls[0].children = [
+        *list(coverage_map_controls[0].children or []),
+        dl.Overlay(
+            dl.GeoJSON(id="coverage-polygons", data=_EMPTY_FC, clickData=None,
+                       style=coverage_ns("polygonStyle"), onEachFeature=coverage_ns("onEachPolygon"),
+                       hideout={"selected_feature_id": None}),
+            name="Coverage polygons", checked=True,
+        ),
+        dl.Overlay(
+            dl.GeoJSON(id="coverage-gcp-points", data=_EMPTY_FC,
+                       pointToLayer=coverage_ns("pointToLayer"), onEachFeature=coverage_ns("onEachGcp")),
+            name="GCP assignment points", checked=True,
+        ),
+    ]
 
     map_card = html.Section(
         style={**_CARD_STYLE, "marginTop": "16px"},
@@ -168,9 +209,7 @@ def create_admin_coverage_layout(
             dl.Map(
                 id="coverage-map", center=[56.15, 10.20], zoom=7, bounds=initial_map_bounds,
                 children=[
-                    *create_layers_control("coverage-map-layer-control"),
-                    dl.GeoJSON(id="coverage-polygons", data=_EMPTY_FC, style=coverage_ns("polygonStyle"), onEachFeature=coverage_ns("onEachPolygon")),
-                    dl.GeoJSON(id="coverage-gcp-points", data=_EMPTY_FC, pointToLayer=coverage_ns("pointToLayer"), onEachFeature=coverage_ns("onEachGcp")),
+                    *coverage_map_controls,
                 ],
                 style={"width": "100%", "height": "590px", "borderRadius": "8px", "overflow": "hidden"},
             ),
@@ -180,6 +219,26 @@ def create_admin_coverage_layout(
                 html.Span("● Uncovered", style={"color": "#d97706", "fontSize": "11px", "marginRight": "14px"}),
                 html.Span("● Multiple matches", style={"color": "#dc2626", "fontSize": "11px"}),
             ], style={"marginTop": "5px"}),
+        ],
+    )
+
+    assignment_card = html.Section(
+        style={**_CARD_STYLE, "marginTop": "16px"},
+        children=[
+            html.H2("Student work allocation", style={"fontSize": "16px", "margin": "0 0 5px"}),
+            html.P("Click one polygon on the map, then select the students responsible for it. Saving replaces the selected polygon's assignment list. This is work guidance only; it does not restrict where students may create GCPs.", style={"fontSize": "12px", "lineHeight": "1.5", "color": "#64748b", "margin": "0 0 12px"}),
+            html.Div(id="coverage-selected-feature-label", children="No polygon selected. Click a polygon on the map to manage its student assignments.", style={"fontSize": "12px", "fontWeight": "650", "color": "#334155", "marginBottom": "8px"}),
+            dcc.Dropdown(
+                id="coverage-assignment-students", options=student_options, value=[], multi=True,
+                placeholder="Select one or more students", clearable=True,
+            ),
+            html.Div([
+                html.Button("Save assignments", id="coverage-assignment-save", n_clicks=0, disabled=True,
+                            style={**_BUTTON_STYLE, "background": "#1d4ed8", "color": "#ffffff", "marginTop": "10px"}),
+                html.Div([html.Span(className="coverage-spinner"), html.Span("Saving polygon assignments…")],
+                         id="coverage-assignment-loading", style={"display": "none", "alignItems": "center", "gap": "9px", "fontSize": "12px", "color": "#1d4ed8", "marginTop": "10px"}),
+            ]),
+            html.Div(id="coverage-assignment-save-status", style={"fontSize": "12px", "marginTop": "8px"}),
         ],
     )
 
@@ -230,7 +289,10 @@ def create_admin_coverage_layout(
         upload_card,
         registry_card,
         map_card,
+        assignment_card,
         analysis_card,
+        dcc.Store(id="coverage-selected-feature", data=None),
+        dcc.Store(id="coverage-assignment-saving", data=False),
         dcc.Store(id="coverage-ui-refresh", data=None),
     ]
     return create_page_shell(

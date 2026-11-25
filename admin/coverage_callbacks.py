@@ -20,9 +20,25 @@ def _require_admin() -> None:
         abort(403)
 
 
+def _dismissible_alert(content, *, level: str = "success", style: dict | None = None):
+    palette = {
+        "success": {"background": "#f0fdf4", "border": "1px solid #bbf7d0", "color": "#166534"},
+        "error": {"background": "#fef2f2", "border": "1px solid #fecaca", "color": "#7f1d1d"},
+        "warning": {"background": "#fffbeb", "border": "1px solid #fde68a", "color": "#92400e"},
+    }
+    return html.Div(
+        [
+            html.Div(content, style={"flex": "1 1 auto", "minWidth": "0"}),
+            html.Button("×", type="button", className="coverage-alert-close", title="Dismiss notification", **{"aria-label": "Dismiss notification"}),
+        ],
+        className="coverage-dismissible-alert",
+        style={**palette.get(level, palette["success"]), "padding": "10px 12px", "borderRadius": "8px", "lineHeight": "1.5", **(style or {})},
+    )
+
+
 def _validation_report(import_data):
     warnings = [html.Li(message, style={"marginBottom": "4px"}) for message in import_data.warnings]
-    return html.Div([
+    content = html.Div([
         html.Div("Validation passed · prepared for publication", style={"fontSize": "13px", "fontWeight": "800", "color": "#166534", "marginBottom": "7px"}),
         html.Div([
             html.Span(f"{import_data.feature_count:,} polygon features", style={"fontWeight": "700"}),
@@ -38,14 +54,16 @@ def _validation_report(import_data):
             "No validation warnings.", style={"fontSize": "11px", "color": "#166534", "marginTop": "7px"}
         ),
         html.Div("Publishing will reuse this prepared data; the source file will not be re-read or reprojected.", style={"fontSize": "11px", "color": "#166534", "marginTop": "7px"}),
-    ], style={"padding": "12px", "background": "#f0fdf4", "border": "1px solid #bbf7d0", "borderRadius": "8px"})
+    ])
+    return _dismissible_alert(content, level="success")
 
 
 def _error_report(title: str, message: str):
-    return html.Div([
+    content = html.Div([
         html.Div(title, style={"fontWeight": "800", "color": "#991b1b", "marginBottom": "5px"}),
         html.Div(message, style={"fontSize": "12px", "lineHeight": "1.5", "color": "#7f1d1d"}),
-    ], style={"padding": "12px", "background": "#fef2f2", "border": "1px solid #fecaca", "borderRadius": "8px"})
+    ])
+    return _dismissible_alert(content, level="error")
 
 
 def _layer_options(layers: list[dict], *, selectable: bool) -> list[dict]:
@@ -162,7 +180,7 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
         State("coverage-validation-state", "data"),
         prevent_initial_call=True,
         running=[
-            (Output("coverage-publish-button", "disabled"), True, False),
+            (Output("coverage-publishing-state", "data"), True, False),
             (Output("coverage-validate-button", "disabled"), True, False),
             (Output("coverage-file-upload", "disabled"), True, False),
             (Output("coverage-publish-loading", "style"),
@@ -199,40 +217,83 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
                 )
             staging_store.delete(token)
             suffix = " This was an idempotent retry; no duplicate features were inserted." if published.get("already_published") else ""
-            status = html.Div(
-                f"Published '{published['layer_name']}' version {published['version']} with {published['feature_count']:,} features.{suffix}",
-                style={"padding": "10px 12px", "border": "1px solid #bbf7d0", "borderRadius": "8px", "background": "#f0fdf4", "color": "#166534", "lineHeight": "1.5"},
+            status = _dismissible_alert(
+                html.Div(f"Published '{published['layer_name']}' version {published['version']} with {published['feature_count']:,} features.{suffix}"),
+                level="success",
             )
             event = {"coverage_layer_id": published["coverage_layer_id"], "request_token": token}
             return status, event
         except Exception as exc:
             return _error_report("Publication failed", str(exc)), no_update
 
-    # Delete requires a second explicit confirmation and retains the selected
-    # target in a store so changing the dropdown cannot redirect the operation.
+    # Application-owned modal retains the exact target until confirmed.
     @app.callback(
-        Output("coverage-delete-confirm", "displayed"),
-        Output("coverage-delete-confirm", "message"),
+        Output("coverage-delete-dialog", "style"),
+        Output("coverage-delete-message", "children"),
         Output("coverage-delete-target", "data"),
         Input("coverage-delete-button", "n_clicks"),
+        Input("coverage-delete-cancel", "n_clicks"),
+        Input("coverage-delete-cancel-x", "n_clicks"),
+        Input("coverage-delete-confirm-button", "n_clicks"),
         State("coverage-management-layer", "value"),
         prevent_initial_call=True,
     )
-    def request_delete(n_clicks, selected_layer_id):
-        if not n_clicks:
-            return no_update, no_update, no_update
+    def request_delete(n_clicks, cancel_clicks, cancel_x_clicks, confirm_clicks, selected_layer_id):
+        del n_clicks, cancel_clicks, cancel_x_clicks, confirm_clicks
         _require_admin()
+        hidden = {"display": "none"}
+        visible = {"display": "flex"}
+        triggered = ctx.triggered_id
+        if triggered in {"coverage-delete-cancel", "coverage-delete-cancel-x"}:
+            return hidden, "", None
+        if triggered == "coverage-delete-confirm-button":
+            return hidden, no_update, no_update
         if not selected_layer_id:
-            return False, "Select a coverage version first.", None
+            return hidden, "Select a coverage version first.", None
         layer = coverage_store.get_layer(selected_layer_id)
         if not layer:
-            return False, "The selected coverage version no longer exists.", None
+            return hidden, "The selected coverage version no longer exists.", None
         target = {"coverage_layer_id": str(layer["coverage_layer_id"]), "layer_name": layer["layer_name"], "version": layer["version"]}
         message = (
             f"Permanently delete '{layer['layer_name']}' version {layer['version']} "
-            f"and its {layer['stored_feature_count']:,} polygon features? This cannot be undone."
+            f"and its {layer['stored_feature_count']:,} polygon features? Any student work-allocation relationships for those polygons will also be removed. This cannot be undone."
         )
-        return True, message, target
+        return visible, message, target
+
+    @app.callback(
+        Output("coverage-publish-button", "disabled"),
+        Input("coverage-validation-state", "data"),
+        Input("coverage-file-upload", "filename"),
+        Input("coverage-layer-name", "value"),
+        Input("coverage-publishing-state", "data"),
+        Input("coverage-published-event", "data"),
+    )
+    def control_publish_button(validation_state, filename, layer_name, publishing, published_event):
+        state = validation_state or {}
+        token = state.get("stage_token")
+        already_published = bool(token and published_event and published_event.get("request_token") == token)
+        valid = bool(state.get("valid") and token and filename and filename == state.get("filename") and str(layer_name or "").strip())
+        return not (valid and not publishing and not already_published)
+
+    @app.callback(
+        Output("coverage-reactivate-button", "disabled"),
+        Input("coverage-management-layer", "value"),
+        Input("coverage-refresh-button", "n_clicks"),
+        Input("coverage-suppress-button", "n_clicks"),
+        Input("coverage-reactivate-button", "n_clicks"),
+        Input("coverage-delete-confirm-button", "n_clicks"),
+        Input("coverage-published-event", "data"),
+        Input("coverage-management-status", "children"),
+    )
+    def control_reactivate_button(selected_layer_id, _refresh, _suppress, _reactivate, _delete, _published, _status):
+        _require_admin()
+        if not selected_layer_id:
+            return True
+        try:
+            layer = coverage_store.get_layer(selected_layer_id)
+            return bool(not layer or (layer.get("is_active") and not layer.get("is_suppressed")))
+        except Exception:
+            return True
 
     # One registry refresh/action callback keeps table and dropdowns consistent.
     @app.callback(
@@ -244,7 +305,7 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
         Input("coverage-refresh-button", "n_clicks"),
         Input("coverage-suppress-button", "n_clicks"),
         Input("coverage-reactivate-button", "n_clicks"),
-        Input("coverage-delete-confirm", "submit_n_clicks"),
+        Input("coverage-delete-confirm-button", "n_clicks"),
         Input("coverage-published-event", "data"),
         State("coverage-management-layer", "value"),
         State("coverage-delete-target", "data"),
@@ -266,7 +327,7 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
                     raise ValueError("Select a coverage version first.")
                 layer = coverage_store.activate_layer(managed_id)
                 message = f"Activated '{layer['layer_name']}' version {layer['version']}. Other versions with the same name are now archived."
-            elif triggered == "coverage-delete-confirm":
+            elif triggered == "coverage-delete-confirm-button":
                 if not delete_target:
                     raise ValueError("The confirmed deletion target is missing. Select the version again.")
                 layer = coverage_store.delete_layer(delete_target["coverage_layer_id"])

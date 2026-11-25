@@ -9,3 +9,75 @@
     animation: coverage-spin 0.8s linear infinite;
 }
 @keyframes coverage-spin { to { transform: rotate(360deg); } }
+
+/* Application-owned permanent-delete dialog. */
+.coverage-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    box-sizing: border-box;
+    background: rgba(15, 23, 42, 0.58);
+    backdrop-filter: blur(2px);
+}
+.coverage-modal-card {
+    position: relative;
+    width: min(100%, 470px);
+    box-sizing: border-box;
+    padding: 22px;
+    border: 1px solid #e2e8f0;
+    border-radius: 13px;
+    background: #ffffff;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+}
+.coverage-modal-close {
+    position: absolute;
+    top: 9px;
+    right: 11px;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #64748b;
+    font-size: 23px;
+    line-height: 1;
+    cursor: pointer;
+}
+.coverage-modal-close:hover { background: #f1f5f9; color: #0f172a; }
+
+/* Success/error alerts can be dismissed locally without another server call. */
+.coverage-dismissible-alert {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.coverage-alert-close {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 6px;
+    padding: 0 4px;
+    background: transparent;
+    color: inherit;
+    font-size: 19px;
+    line-height: 1.1;
+    cursor: pointer;
+    opacity: 0.7;
+}
+.coverage-alert-close:hover { opacity: 1; background: rgba(100,116,139,0.10); }
+
+#coverage-publish-button:disabled,
+#coverage-reactivate-button:disabled,
+#coverage-assignment-save:disabled {
+    opacity: 0.48;
+    cursor: not-allowed !important;
+}
+.coverage-modal-backdrop {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
