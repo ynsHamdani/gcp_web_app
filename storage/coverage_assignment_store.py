@@ -62,9 +62,13 @@ class CoverageAssignmentStore:
         sql = text("""
             SELECT f.coverage_feature_id, f.coverage_layer_id,
                    f.source_feature_key, f.feature_label, f.attributes,
-                   l.layer_name, l.version
+                   l.layer_name, l.version,
+                   COALESCE(t.objective, '') AS objective,
+                   COALESCE(t.instructions, '') AS instructions
             FROM coverage_features f
             JOIN coverage_layers l ON l.coverage_layer_id = f.coverage_layer_id
+            LEFT JOIN coverage_feature_tasks t
+              ON t.coverage_feature_id = f.coverage_feature_id
             WHERE f.coverage_feature_id = :feature_id
               AND f.coverage_layer_id = :layer_id
               AND l.is_active = TRUE
@@ -86,12 +90,32 @@ class CoverageAssignmentStore:
         item["assigned_student_ids"] = self.list_students_for_feature(feature_id, layer_id)
         return item
 
-    def replace_feature_assignments(self, *, feature_id: int, layer_id: int, student_ids, assigned_by: int) -> list[int]:
-        """Atomically replace the student set. Empty selection removes all assignments."""
+    @staticmethod
+    def _task_text(value: Any, name: str, limit: int) -> str:
+        normalized = str(value or "").strip()
+        if "\x00" in normalized:
+            raise ValueError(f"{name} cannot contain null characters.")
+        if len(normalized) > limit:
+            raise ValueError(f"{name} must not exceed {limit:,} characters.")
+        return normalized
+
+    def replace_feature_assignments(
+        self, *, feature_id: int, layer_id: int, student_ids, assigned_by: int,
+        objective: str | None = None, instructions: str | None = None,
+    ) -> list[int]:
+        """Atomically replace students and, when supplied, the polygon's shared task.
+
+        Empty student selection removes all assignments. Empty objective and
+        instructions remove the optional task row. Omitting both task arguments
+        preserves task metadata for backward-compatible callers.
+        """
         feature_id = self._positive_id(feature_id, "coverage_feature_id")
         layer_id = self._positive_id(layer_id, "coverage_layer_id")
         assigned_by = self._positive_id(assigned_by, "assigned_by")
         selected_ids = self._student_ids(student_ids)
+        task_supplied = objective is not None or instructions is not None
+        normalized_objective = self._task_text(objective, "Objective", 240) if objective is not None else None
+        normalized_instructions = self._task_text(instructions, "Instructions", 10000) if instructions is not None else None
 
         with self.engine.begin() as connection:
             feature = connection.execute(text("""
@@ -151,6 +175,45 @@ class CoverageAssignmentStore:
                     DELETE FROM coverage_feature_assignments
                     WHERE coverage_feature_id = :feature_id
                 """), {"feature_id": feature_id})
+
+            if task_supplied:
+                # If one field was omitted, preserve its current value rather
+                # than silently clearing it. Admin callback supplies both.
+                current_task = connection.execute(text("""
+                    SELECT objective, instructions
+                    FROM coverage_feature_tasks
+                    WHERE coverage_feature_id = :feature_id
+                    FOR UPDATE
+                """), {"feature_id": feature_id}).mappings().first()
+                objective_value = (
+                    normalized_objective if normalized_objective is not None
+                    else str((current_task or {}).get("objective") or "")
+                )
+                instructions_value = (
+                    normalized_instructions if normalized_instructions is not None
+                    else str((current_task or {}).get("instructions") or "")
+                )
+                if objective_value or instructions_value:
+                    connection.execute(text("""
+                        INSERT INTO coverage_feature_tasks
+                            (coverage_feature_id, objective, instructions, updated_by, updated_at)
+                        VALUES (:feature_id, :objective, :instructions, :updated_by, CURRENT_TIMESTAMP)
+                        ON CONFLICT (coverage_feature_id)
+                        DO UPDATE SET objective = EXCLUDED.objective,
+                                      instructions = EXCLUDED.instructions,
+                                      updated_by = EXCLUDED.updated_by,
+                                      updated_at = CURRENT_TIMESTAMP
+                    """), {
+                        "feature_id": feature_id,
+                        "objective": objective_value,
+                        "instructions": instructions_value,
+                        "updated_by": assigned_by,
+                    })
+                else:
+                    connection.execute(text("""
+                        DELETE FROM coverage_feature_tasks
+                        WHERE coverage_feature_id = :feature_id
+                    """), {"feature_id": feature_id})
         return selected_ids
 
     def list_student_layers(self, student_id: int) -> list[dict]:
@@ -195,10 +258,14 @@ class CoverageAssignmentStore:
                 SELECT ST_Transform(ST_MakeEnvelope(:west, :south, :east, :north, 4326), 25832) AS geom
             ), visible AS (
                 SELECT f.coverage_feature_id, f.source_feature_key, f.feature_label,
-                       f.attributes, f.geom
+                       f.attributes, f.geom,
+                       COALESCE(t.objective, '') AS objective,
+                       COALESCE(t.instructions, '') AS instructions
                 FROM coverage_feature_assignments a
                 JOIN coverage_features f ON f.coverage_feature_id = a.coverage_feature_id
                 JOIN coverage_layers l ON l.coverage_layer_id = f.coverage_layer_id
+                LEFT JOIN coverage_feature_tasks t
+                  ON t.coverage_feature_id = f.coverage_feature_id
                 JOIN users u ON u.user_id = a.student_id
                 CROSS JOIN viewport v
                 WHERE a.student_id = :student_id
@@ -210,6 +277,7 @@ class CoverageAssignmentStore:
                 LIMIT :limit_plus_one
             )
             SELECT coverage_feature_id, source_feature_key, feature_label, attributes,
+                   objective, instructions,
                    ST_AsGeoJSON(ST_Transform(
                        CASE WHEN :tolerance > 0 THEN ST_SimplifyPreserveTopology(geom, :tolerance) ELSE geom END,
                        4326
@@ -238,6 +306,8 @@ class CoverageAssignmentStore:
                     "source_feature_key": row["source_feature_key"],
                     "feature_label": row["feature_label"],
                     "attributes": attrs if isinstance(attrs, dict) else {},
+                    "objective": str(row.get("objective") or ""),
+                    "instructions": str(row.get("instructions") or ""),
                 },
             })
         return {"geojson": {"type": "FeatureCollection", "features": features},

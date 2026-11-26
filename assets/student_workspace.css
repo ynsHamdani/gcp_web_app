@@ -1,0 +1,35 @@
+/* Compact student workspace: reclaim vertical map space without changing map logic. */
+.app-header { height: 56px; }
+.map-panel-header { height: 42px; }
+.map-panel-status { height: 22px; }
+.map-panel-opacity { height: 34px; }
+.bottom-controls { height: 62px; padding: 0 14px; }
+.gcp-title { font-size: 12px; }
+.gcp-status { font-size: 11px; }
+.gcp-buttons { gap: 6px; }
+.gcp-buttons button { padding: 6px 10px !important; font-size: 11px !important; }
+.table-section { height: 158px; padding: 6px 12px 9px; }
+.student-table-actions { display: flex; align-items: center; gap: 7px; }
+.student-table-actions button { padding: 6px 10px !important; font-size: 11px !important; }
+#student-reference-coverage-status, #student-historical-coverage-status { min-height: 16px; padding: 1px 8px !important; font-size: 10px !important; }
+.student-coverage-task-popup { max-width: 300px; line-height: 1.45; }
+.student-coverage-objective { margin: 6px 0 4px; font-weight: 600; }
+.student-coverage-instructions { margin-top: 7px; }
+.student-coverage-instructions summary { cursor: pointer; color: #0f766e; font-weight: 650; }
+.student-coverage-instructions-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 6px; max-height: 240px; overflow-y: auto; }
+
+@media (max-width: 900px) {
+    .bottom-controls { gap: 8px; padding: 8px 10px; }
+    .gcp-buttons { flex-wrap: wrap; justify-content: flex-end; }
+}
+
+@media (max-width: 700px) {
+    html, body { height: auto; min-height: 100%; overflow: auto; }
+    .app-container { height: auto; min-height: 100vh; }
+    .maps-area { flex: 0 0 auto; flex-direction: column; height: auto; }
+    .map-panel { min-height: 390px; }
+    .map-container { min-height: 320px; }
+    .bottom-controls { height: auto; min-height: 68px; flex-wrap: wrap; padding: 10px; }
+    .gcp-buttons { justify-content: flex-start; }
+    .table-section { height: 230px; flex: 0 0 auto; }
+}

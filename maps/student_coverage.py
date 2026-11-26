@@ -14,7 +14,7 @@ def install_student_coverage_overlays(map_component, layers: list[dict], map_kin
     overlays = []
     for item in layers or []:
         layer_id = str(item["coverage_layer_id"])
-        label = f"{item['layer_name']} · v{item['version']} ({int(item['assigned_feature_count']):,})"
+        label = f"Assigned: {item['layer_name']} · v{item['version']} ({int(item['assigned_feature_count']):,})"
         overlays.append(dl.Overlay(
             dl.GeoJSON(
                 id={"type": "student-coverage-geojson", "map": map_kind, "layer_id": layer_id},

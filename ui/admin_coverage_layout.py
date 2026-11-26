@@ -51,17 +51,26 @@ def _registry_rows(layers: list[dict]):
 
 def _feature_rows(records: list[dict]):
     if not records:
-        return [html.Tr(html.Td("No coverage features are available for this page.", colSpan=5, style={**_BODY_CELL, "textAlign": "center", "padding": "18px", "color": "#64748b"}))]
+        return [html.Tr(html.Td("No coverage features are available for this page.", colSpan=6, style={**_BODY_CELL, "textAlign": "center", "padding": "18px", "color": "#64748b"}))]
     rows = []
     for item in records:
         attrs = item.get("attributes") or {}
         attr_text = json.dumps(attrs, ensure_ascii=False, sort_keys=True) if attrs else "—"
+        responsible = item.get("responsible_students") or []
+        if isinstance(responsible, str):
+            try:
+                responsible = json.loads(responsible)
+            except (TypeError, ValueError):
+                responsible = []
+        responsible_json = json.dumps(responsible if isinstance(responsible, list) else [], ensure_ascii=False, sort_keys=True)
+        responsible_preview = responsible_json if len(responsible_json) <= 420 else responsible_json[:417] + "..."
         rows.append(html.Tr([
             html.Td(str(item.get("source_feature_key") or ""), style=_BODY_CELL),
             html.Td(str(item.get("feature_label") or ""), style=_BODY_CELL),
             html.Td(f"{int(item.get('assigned_count') or 0):,}", style={**_BODY_CELL, "fontVariantNumeric": "tabular-nums"}),
-            html.Td(context_breakdown_label(item.get("context_breakdown")), style={**_BODY_CELL, "maxWidth": "300px", "whiteSpace": "normal"}),
-            html.Td(attr_text[:500], style={**_BODY_CELL, "maxWidth": "330px", "overflowWrap": "anywhere", "color": "#64748b"}),
+            html.Td(context_breakdown_label(item.get("context_breakdown")), style={**_BODY_CELL, "maxWidth": "250px", "whiteSpace": "normal"}),
+            html.Td(html.Code(responsible_preview), title=responsible_json, style={**_BODY_CELL, "maxWidth": "280px", "whiteSpace": "normal", "overflowWrap": "anywhere", "fontSize": "10px"}),
+            html.Td(attr_text[:500], style={**_BODY_CELL, "maxWidth": "300px", "overflowWrap": "anywhere", "color": "#64748b"}),
         ]))
     return rows
 
@@ -227,6 +236,25 @@ def create_admin_coverage_layout(
             html.H2("Student work allocation", style={"fontSize": "16px", "margin": "0 0 5px"}),
             html.P("Click one polygon on the map, then select the students responsible for it. Saving replaces the selected polygon's assignment list. This is work guidance only; it does not restrict where students may create GCPs.", style={"fontSize": "12px", "lineHeight": "1.5", "color": "#64748b", "margin": "0 0 12px"}),
             html.Div(id="coverage-selected-feature-label", children="No polygon selected. Click a polygon on the map to manage its student assignments.", style={"fontSize": "12px", "fontWeight": "650", "color": "#334155", "marginBottom": "8px"}),
+            html.Div([
+                html.Label("Objective", style=_LABEL_STYLE),
+                dcc.Input(
+                    id="coverage-assignment-objective", type="text", maxLength=240,
+                    placeholder="e.g. Identify historical wetland boundaries", value="",
+                    style=_INPUT_STYLE,
+                ),
+                html.Div("A short statement of the intended work (maximum 240 characters).", style={"fontSize": "11px", "color": "#64748b", "marginTop": "4px"}),
+            ], style={"marginBottom": "10px"}),
+            html.Div([
+                html.Label("Instructions", style=_LABEL_STYLE),
+                dcc.Textarea(
+                    id="coverage-assignment-instructions", value="", maxLength=10000,
+                    placeholder="Describe how the student should carry out the task…",
+                    rows=4, style={**_INPUT_STYLE, "minHeight": "92px", "resize": "vertical", "lineHeight": "1.45"},
+                ),
+                html.Div("Long instructions are shown to students on demand when they click the assigned polygon.", style={"fontSize": "11px", "color": "#64748b", "marginTop": "4px"}),
+            ], style={"marginBottom": "10px"}),
+            html.Label("Responsible students", style=_LABEL_STYLE),
             dcc.Dropdown(
                 id="coverage-assignment-students", options=student_options, value=[], multi=True,
                 placeholder="Select one or more students", clearable=True,
@@ -257,8 +285,8 @@ def create_admin_coverage_layout(
             html.Div([
                 html.H3("Coverage feature statistics", style={"fontSize": "14px", "margin": "16px 0 8px"}),
                 html.Div(style={"overflowX": "auto", "border": "1px solid #e2e8f0", "borderRadius": "8px"}, children=html.Table([
-                    html.Thead(html.Tr([html.Th(label, style=_HEADER_CELL) for label in ("Source feature key", "Feature label", "Uniquely assigned GCPs", "Context breakdown", "Attributes (preview)") ])),
-                    html.Tbody([html.Tr(html.Td("Run the assignment to load feature statistics.", colSpan=5, style={**_BODY_CELL, "textAlign": "center", "padding": "18px", "color": "#64748b"}))], id="coverage-feature-table-body"),
+                    html.Thead(html.Tr([html.Th(label, style=_HEADER_CELL) for label in ("Source feature key", "Feature label", "Uniquely assigned GCPs", "Context breakdown", "Responsible students", "Attributes (preview)") ])),
+                    html.Tbody([html.Tr(html.Td("Run the assignment to load feature statistics.", colSpan=6, style={**_BODY_CELL, "textAlign": "center", "padding": "18px", "color": "#64748b"}))], id="coverage-feature-table-body"),
                 ], style={"width": "100%", "borderCollapse": "collapse"})),
                 html.Div([
                     html.Button("Previous", id="coverage-feature-prev", n_clicks=0, style={**_BUTTON_STYLE, "background": "#f1f5f9", "color": "#334155"}),

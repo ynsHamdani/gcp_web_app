@@ -113,7 +113,7 @@ def _csv_download(rows: list[dict], columns: list[str], filename: str):
     writer.writeheader()
     for row in rows:
         clean = dict(row)
-        for key in ("context_breakdown", "attributes"):
+        for key in ("context_breakdown", "responsible_students", "attributes"):
             if isinstance(clean.get(key), (dict, list)):
                 clean[key] = json.dumps(clean[key], ensure_ascii=False, sort_keys=True)
         writer.writerow(clean)
@@ -431,7 +431,7 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
         if triggered == "coverage-analysis-layer":
             return (
                 _summary_cards(None),
-                [html.Tr(html.Td("Run the assignment to load feature statistics.", colSpan=5, style={"padding": "18px", "textAlign": "center", "color": "#64748b"}))],
+                [html.Tr(html.Td("Run the assignment to load feature statistics.", colSpan=6, style={"padding": "18px", "textAlign": "center", "color": "#64748b"}))],
                 0, "Page 0 of 0", "Coverage version changed. Run the assignment to refresh statistics.", None,
             )
         if not layer_id:
@@ -498,7 +498,7 @@ def register_coverage_callbacks(app, coverage_store, staging_store) -> None:
             "coverage_layer_version": layer["version"] if layer else "",
             "assignment_rule": "ST_Covers; assign only when match_count = 1",
         } for row in rows]
-        return _csv_download(enriched, ["coverage_layer_id", "coverage_layer_name", "coverage_layer_version", "assignment_rule", "coverage_feature_id", "source_feature_key", "feature_label", "assigned_count", "context_breakdown", "attributes"], "coverage_feature_statistics.csv")
+        return _csv_download(enriched, ["coverage_layer_id", "coverage_layer_name", "coverage_layer_version", "assignment_rule", "coverage_feature_id", "source_feature_key", "feature_label", "assigned_count", "responsible_students", "context_breakdown", "attributes"], "coverage_feature_statistics.csv")
 
     @app.callback(
         Output("coverage-assignment-download", "data"),

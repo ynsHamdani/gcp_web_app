@@ -155,28 +155,27 @@ def create_layout(reference_map, historical_map, initial_rows=None, auth_usernam
                 ],
                 style={"fontSize": "11px", "color": "#64748b", "display": "flex", "justifyContent": "space-between", "gap": "12px", "flexWrap": "wrap", "padding": "3px 2px"},
             ),
-            html.Div(
-                className="table-toolbar",
-                children=[
-                    html.Button("Export my GCPs (CSV)", id="student-export-gcps", n_clicks=0, className="secondary-button"),
-                    dcc.Download(id="student-gcp-download"),
-                ],
-                style={"display": "flex", "justifyContent": "flex-end", "margin": "8px 0"},
-            ),
             create_gcp_controls(),
             html.Div(
                 className="table-section",
                 children=[
                     html.Div(
-                        style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "8px", "marginBottom": "8px"},
+                        style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "8px", "marginBottom": "7px"},
                         children=[
                             html.Div("CONTROL POINTS", className="table-title"),
-                            html.Button(
-                                "Refresh records",
-                                id="refresh-gcp-button",
-                                n_clicks=0,
-                                className="secondary-button",
-                                style={"padding": "6px 11px", "fontSize": "12px", "cursor": "pointer"},
+                            html.Div(
+                                className="student-table-actions",
+                                children=[
+                                    html.Button("Export my GCPs (CSV)", id="student-export-gcps", n_clicks=0, className="secondary-button"),
+                                    html.Button(
+                                        "Refresh records",
+                                        id="refresh-gcp-button",
+                                        n_clicks=0,
+                                        className="secondary-button",
+                                        style={"padding": "6px 11px", "fontSize": "12px", "cursor": "pointer"},
+                                    ),
+                                    dcc.Download(id="student-gcp-download"),
+                                ],
                             ),
                         ],
                     ),

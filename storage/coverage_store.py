@@ -429,15 +429,33 @@ class CoverageStore:
                        SUM(gcp_count)::integer AS assigned_count,
                        jsonb_object_agg(context_label, gcp_count) AS context_breakdown
                 FROM assigned_context GROUP BY feature_id
+            ), responsible AS (
+                SELECT a.coverage_feature_id AS feature_id,
+                       jsonb_agg(
+                           jsonb_build_object(
+                               'student_id', u.user_id,
+                               'username', u.username,
+                               'is_active', u.is_active
+                           ) ORDER BY LOWER(u.username), u.user_id
+                       ) AS responsible_students
+                FROM coverage_feature_assignments a
+                JOIN coverage_features assigned_feature
+                  ON assigned_feature.coverage_feature_id = a.coverage_feature_id
+                JOIN users u ON u.user_id = a.student_id
+                WHERE u.user_role = 'student'
+                  AND assigned_feature.coverage_layer_id = :layer_id
+                GROUP BY a.coverage_feature_id
             )
             SELECT f.coverage_feature_id, f.source_feature_key, f.feature_label,
                    f.attributes,
                    COALESCE(fc.assigned_count, 0)::integer AS assigned_count,
-                   COALESCE(fc.context_breakdown, '{}'::jsonb) AS context_breakdown
+                   COALESCE(fc.context_breakdown, '{}'::jsonb) AS context_breakdown,
+                   COALESCE(r.responsible_students, '[]'::jsonb) AS responsible_students
             FROM coverage_features f
             LEFT JOIN feature_counts fc ON fc.feature_id = f.coverage_feature_id
+            LEFT JOIN responsible r ON r.feature_id = f.coverage_feature_id
             WHERE f.coverage_layer_id = :layer_id
-            ORDER BY f.feature_label, f.source_feature_key, f.coverage_feature_id
+            ORDER BY COALESCE(fc.assigned_count, 0) DESC, f.coverage_feature_id ASC
             LIMIT :page_size OFFSET :offset
         """)
         count_sql = text("SELECT COUNT(*) FROM coverage_features WHERE coverage_layer_id = :layer_id")
@@ -454,6 +472,10 @@ class CoverageStore:
             if isinstance(breakdown, str):
                 breakdown = json.loads(breakdown)
             item["context_breakdown"] = breakdown
+            responsible = item.get("responsible_students") or []
+            if isinstance(responsible, str):
+                responsible = json.loads(responsible)
+            item["responsible_students"] = responsible if isinstance(responsible, list) else []
             result.append(item)
         return result, total
 
@@ -472,18 +494,45 @@ class CoverageStore:
                 SELECT feature_id, SUM(gcp_count)::integer AS assigned_count,
                        jsonb_object_agg(context_label, gcp_count) AS context_breakdown
                 FROM assigned_context GROUP BY feature_id
+            ), responsible AS (
+                SELECT a.coverage_feature_id AS feature_id,
+                       jsonb_agg(
+                           jsonb_build_object(
+                               'student_id', u.user_id,
+                               'username', u.username,
+                               'is_active', u.is_active
+                           ) ORDER BY LOWER(u.username), u.user_id
+                       ) AS responsible_students
+                FROM coverage_feature_assignments a
+                JOIN coverage_features assigned_feature
+                  ON assigned_feature.coverage_feature_id = a.coverage_feature_id
+                JOIN users u ON u.user_id = a.student_id
+                WHERE u.user_role = 'student'
+                  AND assigned_feature.coverage_layer_id = :layer_id
+                GROUP BY a.coverage_feature_id
             )
             SELECT f.coverage_feature_id, f.source_feature_key, f.feature_label, f.attributes,
                    COALESCE(fc.assigned_count, 0)::integer AS assigned_count,
-                   COALESCE(fc.context_breakdown, '{}'::jsonb) AS context_breakdown
+                   COALESCE(fc.context_breakdown, '{}'::jsonb) AS context_breakdown,
+                   COALESCE(r.responsible_students, '[]'::jsonb) AS responsible_students
             FROM coverage_features f
             LEFT JOIN feature_counts fc ON fc.feature_id = f.coverage_feature_id
+            LEFT JOIN responsible r ON r.feature_id = f.coverage_feature_id
             WHERE f.coverage_layer_id = :layer_id
-            ORDER BY f.feature_label, f.source_feature_key, f.coverage_feature_id
+            ORDER BY COALESCE(fc.assigned_count, 0) DESC, f.coverage_feature_id ASC
         """)
         with self.engine.connect() as connection:
             rows = connection.execute(sql, self._layer_parameter(layer_id)).mappings().all()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key in ("context_breakdown", "responsible_students"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    value = json.loads(value)
+                item[key] = value if isinstance(value, (dict, list)) else ({} if key == "context_breakdown" else [])
+            result.append(item)
+        return result
 
     def export_gcp_assignments(self, layer_id: str | int) -> list[dict]:
         sql = text(_MATCH_CTE + """

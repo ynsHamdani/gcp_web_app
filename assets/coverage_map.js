@@ -41,7 +41,7 @@
             const layerId = Number(p.coverage_layer_id);
             const normalStyle = basePolygonStyle(feature);
 
-            layer.bindTooltip(String(label), { sticky: true, direction: "top" });
+            // Polygon information is intentionally click-only; hovering stays quiet.
             layer.on("click", function (event) {
                 if (event && event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
 
