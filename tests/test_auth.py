@@ -156,3 +156,30 @@ def test_dash_post_rejects_cross_origin_requests():
         headers={"Origin": "http://localhost"},
     )
     assert accepted.status_code == 200
+
+
+def test_login_is_throttled_after_repeated_invalid_passwords():
+    client = make_client()
+    responses = []
+    for _ in range(5):
+        response, _ = login(client, "student", "wrong-password")
+        responses.append(response)
+    assert responses[-1].status_code == 429
+    assert int(responses[-1].headers["Retry-After"]) > 0
+
+    # A correct password is still blocked during the active lockout window.
+    blocked, _ = login(client, "student", "student-pass-123")
+    assert blocked.status_code == 429
+
+
+def test_login_and_authenticated_pages_are_not_cacheable():
+    client = make_client()
+    login_page = client.get("/login")
+    assert "no-store" in login_page.headers.get("Cache-Control", "")
+
+    response, _ = login(client, "student", "student-pass-123")
+    assert response.status_code == 302
+    private_page = client.get("/")
+    assert "no-store" in private_page.headers.get("Cache-Control", "")
+    assert private_page.headers.get("Pragma") == "no-cache"
+    assert private_page.headers.get("Expires") == "0"

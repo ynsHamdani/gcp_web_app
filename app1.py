@@ -32,7 +32,7 @@ from storage.semantic_gcp_store import SemanticGCPStore
 from storage.layer_store import PostgresLayerStore
 from services.runtime_settings import get_runtime_setting
 from ui.controls import create_app_layout
-from config import SECRET_KEY, RASTER_SIGNING_KEY
+from config import APP_DEBUG, APP_HOST, APP_PORT, SECRET_KEY, RASTER_SIGNING_KEY
 
 
 # =========================================================
@@ -170,4 +170,11 @@ if coverage_assignment_store is not None:
 # =========================================================
 
 if __name__ == "__main__":
-    app.run(debug=True, dev_tools_ui=False)
+    # Keep the default development workflow on localhost. Set APP_ENV,
+    # APP_DEBUG, APP_HOST and APP_PORT explicitly for other environments.
+    app.run(
+        host=APP_HOST,
+        port=APP_PORT,
+        debug=APP_DEBUG,
+        dev_tools_ui=False,
+    )

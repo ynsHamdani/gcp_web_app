@@ -23,7 +23,35 @@ TEMP_RASTER_STAGING_DIR = TEMP_RASTER_DIR / "staging"
 GCP_DATA_DIR = DATA_DIR / "gcps"
 LAYER_DATA_DIR = DATA_DIR / "layers"
 
-APP_BASE_URL = os.getenv("APP_BASE_URL", "http://127.0.0.1:8050").rstrip("/")
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower() or "development"
+if APP_ENV not in {"development", "test", "production"}:
+    raise ValueError("APP_ENV must be development, test, or production.")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value.")
+
+
+APP_DEBUG = _env_bool("APP_DEBUG", APP_ENV == "development")
+if APP_ENV == "production" and APP_DEBUG:
+    raise RuntimeError("APP_DEBUG must be false when APP_ENV=production.")
+APP_HOST = os.getenv("APP_HOST", "127.0.0.1").strip() or "127.0.0.1"
+try:
+    APP_PORT = int(os.getenv("APP_PORT", "8050"))
+except ValueError as exc:
+    raise ValueError("APP_PORT must be an integer between 1 and 65535.") from exc
+if not 1 <= APP_PORT <= 65535:
+    raise ValueError("APP_PORT must be an integer between 1 and 65535.")
+
+APP_BASE_URL = os.getenv("APP_BASE_URL", f"http://127.0.0.1:{APP_PORT}").rstrip("/")
 TITILER_URL = os.getenv("TITILER_URL", "http://127.0.0.1:8000").rstrip("/")
 SECRET_KEY = os.getenv("GCP_SECRET_KEY", "").strip()
 RASTER_SIGNING_KEY = os.getenv("RASTER_SIGNING_KEY", "").strip()

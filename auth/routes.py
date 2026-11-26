@@ -4,12 +4,13 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from urllib.parse import urlparse
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, flash, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_user, logout_user
 from flask_wtf.csrf import generate_csrf, validate_csrf
 from wtforms.validators import ValidationError
 
 from auth.forms import LoginForm
+from auth.login_throttle import LoginThrottle
 
 
 def _safe_next_url(target: str | None) -> bool:
@@ -19,8 +20,9 @@ def _safe_next_url(target: str | None) -> bool:
     return not parsed.scheme and not parsed.netloc
 
 
-def create_auth_blueprint(user_store) -> Blueprint:
+def create_auth_blueprint(user_store, login_throttle: LoginThrottle | None = None) -> Blueprint:
     blueprint = Blueprint("auth", __name__)
+    throttle = login_throttle or LoginThrottle()
 
     @blueprint.route("/login", methods=["GET", "POST"])
     def login():
@@ -28,8 +30,21 @@ def create_auth_blueprint(user_store) -> Blueprint:
             return redirect(url_for("auth.admin") if current_user.role == "admin" else "/")
         form = LoginForm()
         if form.validate_on_submit():
-            user = user_store.authenticate(form.identifier.data, form.password.data)
+            identifier = form.identifier.data or ""
+            remote_addr = request.remote_addr or "unknown"
+            retry_after = throttle.retry_after(identifier, remote_addr)
+            if retry_after:
+                flash("Too many sign-in attempts. Please wait before trying again.", "error")
+                response = make_response(
+                    render_template("login.html", form=form, next_url=request.args.get("next", "")),
+                    429,
+                )
+                response.headers["Retry-After"] = str(retry_after)
+                return response
+
+            user = user_store.authenticate(identifier, form.password.data)
             if user is not None and user.is_active:
+                throttle.clear_identifier(identifier)
                 # Create the revocable server-side session before marking the
                 # browser as authenticated. If PostgreSQL is unavailable, no
                 # authenticated or remember cookie is issued for a session
@@ -51,6 +66,15 @@ def create_auth_blueprint(user_store) -> Blueprint:
                 if _safe_next_url(target):
                     return redirect(target)
                 return redirect(url_for("auth.admin") if user.role == "admin" else "/")
+            retry_after = throttle.record_failure(identifier, remote_addr)
+            if retry_after:
+                flash("Too many sign-in attempts. Please wait before trying again.", "error")
+                response = make_response(
+                    render_template("login.html", form=form, next_url=request.args.get("next", "")),
+                    429,
+                )
+                response.headers["Retry-After"] = str(retry_after)
+                return response
             flash("Invalid username/email or password.", "error")
         return render_template("login.html", form=form, next_url=request.args.get("next", ""))
 

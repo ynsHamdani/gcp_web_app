@@ -10,6 +10,7 @@ from flask import abort, redirect, request, session, url_for
 from flask_login import LoginManager, current_user, logout_user
 
 from auth.routes import create_auth_blueprint
+from config import APP_ENV
 from services.runtime_settings import dash_request_max_content_length
 
 
@@ -20,8 +21,17 @@ def init_auth(server, user_store, *, secret_key: str, raster_signing_key: str | 
         len(raster_signing_key) < 32 or raster_signing_key.startswith("replace_with_")
     ):
         raise RuntimeError("RASTER_SIGNING_KEY must be a separate random secret of at least 32 characters.")
+    if raster_signing_key is not None and raster_signing_key == secret_key:
+        raise RuntimeError("GCP_SECRET_KEY and RASTER_SIGNING_KEY must be different secrets.")
 
-    secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
+    secure_default = APP_ENV == "production"
+    secure_value = os.getenv("SESSION_COOKIE_SECURE")
+    secure_cookie = (
+        secure_default if secure_value is None
+        else secure_value.strip().lower() in {"1", "true", "yes", "on"}
+    )
+    if APP_ENV == "production" and not secure_cookie:
+        raise RuntimeError("SESSION_COOKIE_SECURE must be true when APP_ENV=production (HTTPS required).")
     server.config.update(
         SECRET_KEY=secret_key,
         SESSION_COOKIE_HTTPONLY=True,
@@ -67,7 +77,11 @@ def init_auth(server, user_store, *, secret_key: str, raster_signing_key: str | 
     def load_user(user_id: str):
         return user_store.get_by_id(user_id)
 
-    server.register_blueprint(create_auth_blueprint(user_store))
+    from auth.login_throttle import LoginThrottle
+    server.extensions["gcp_login_throttle"] = LoginThrottle()
+    server.register_blueprint(
+        create_auth_blueprint(user_store, server.extensions["gcp_login_throttle"])
+    )
 
     @server.before_request
     def require_authentication_and_role():
@@ -143,8 +157,29 @@ def init_auth(server, user_store, *, secret_key: str, raster_signing_key: str | 
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-        if request.path.startswith("/admin/") or request.path in {"/login", "/change-password"}:
-            response.headers.setdefault("Cache-Control", "no-store")
+        # Authenticated Dash pages/callbacks and signed raster capabilities may
+        # contain user-specific or otherwise sensitive data. Do not let browser
+        # or intermediary caches retain those responses after logout/expiry.
+        is_signed_raster = request.path.startswith("/raster/")
+        is_auth_page = request.path in {"/login", "/change-password", "/logout"}
+        is_admin_page = request.path == "/admin" or request.path.startswith("/admin/")
+        is_dash_endpoint = "/_dash" in request.path
+        is_static_asset = request.path.startswith("/assets/")
+        is_private_content = (
+            (current_user.is_authenticated and not is_static_asset)
+            or is_signed_raster or is_auth_page or is_admin_page or is_dash_endpoint
+        )
+        if is_private_content:
+            response.headers["Cache-Control"] = "private, no-store, no-cache, max-age=0, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            vary_values = {
+                value.strip()
+                for value in response.headers.get("Vary", "").split(",")
+                if value.strip()
+            }
+            vary_values.add("Cookie")
+            response.headers["Vary"] = ", ".join(sorted(vary_values))
         return response
 
     return login_manager

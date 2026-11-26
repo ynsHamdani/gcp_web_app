@@ -402,14 +402,33 @@ class AuthStore:
         target_id: str | int | None = None, details: dict | None = None,
     ) -> None:
         import json
-        with self.pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO admin_audit_log
-                        (actor_user_id, action, target_type, target_id, details)
-                    VALUES (%s, %s, %s, %s, %s::jsonb)
-                """, (
-                    int(actor_id), str(action)[:100], str(target_type)[:80],
-                    str(target_id) if target_id is not None else None,
-                    json.dumps(details or {}, ensure_ascii=False),
-                ))
+        import logging
+        import time
+
+        statement = """
+            INSERT INTO admin_audit_log
+                (actor_user_id, action, target_type, target_id, details)
+            VALUES (%s, %s, %s, %s, %s::jsonb)
+        """
+        parameters = (
+            int(actor_id), str(action)[:100], str(target_type)[:80],
+            str(target_id) if target_id is not None else None,
+            json.dumps(details or {}, ensure_ascii=False),
+        )
+        # Transient pool/network failures are retried once. The method still
+        # raises after the retry so callback-level logging can surface a
+        # persistent audit outage rather than silently masking it.
+        for attempt in range(2):
+            try:
+                with self.pool.connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(statement, parameters)
+                return
+            except Exception:
+                if attempt == 1:
+                    logging.getLogger(__name__).exception(
+                        "Admin audit insert failed after retry (action=%s, target_type=%s)",
+                        str(action)[:100], str(target_type)[:80],
+                    )
+                    raise
+                time.sleep(0.1)

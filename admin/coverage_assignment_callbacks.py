@@ -156,9 +156,12 @@ def register_coverage_assignment_callbacks(app, assignment_store, auth_store) ->
                     },
                 )
             except Exception:
-                # Audit logging must not make a committed assignment appear
-                # to have failed.
-                pass
+                # Preserve the committed assignment while making the audit
+                # failure visible in the application log for follow-up.
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Could not write coverage assignment audit record"
+                )
             if not selected_ids:
                 return _alert(f"All student assignments were removed from polygon {feature_id}. The task text was saved for possible future allocation.", success=True)
             return _alert(f"Saved the task and {len(selected_ids)} student assignment(s) for polygon {feature_id}.", success=True)

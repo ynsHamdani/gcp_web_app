@@ -97,12 +97,17 @@ def _safe_filename(filename: str) -> str:
     return name
 
 
-def _decode_upload(contents: str) -> bytes:
-    """Decode Dash dcc.Upload contents into raw file bytes."""
+def _decode_upload(contents: str, filename: str = "raster upload") -> bytes:
+    """Check the encoded size, then decode Dash dcc.Upload contents."""
 
     if not contents or "," not in contents:
         raise ValueError("Invalid upload data.")
 
+    # Estimate the decoded size from the base64 length before allocating a
+    # second full-size copy in memory. This applies to both student and admin
+    # raster uploads.
+    from services.runtime_settings import validate_dash_upload_size
+    validate_dash_upload_size(contents, filename or "raster upload")
     _, encoded = contents.split(",", 1)
 
     try:
@@ -318,7 +323,7 @@ def save_uploaded_tiff(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    data = _decode_upload(contents)
+    data = _decode_upload(contents, filename)
     output_path = output_dir / (
         f"{uuid.uuid4().hex}_{_safe_filename(filename)}"
     )
@@ -736,7 +741,7 @@ def prepare_uploaded_raster(
     # Cleanup old temporary data before doing new work.
     cleanup_expired_temp_rasters()
 
-    data = _decode_upload(contents)
+    data = _decode_upload(contents, filename)
     if not data:
         raise ValueError("The uploaded file is empty.")
 
