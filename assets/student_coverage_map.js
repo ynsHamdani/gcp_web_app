@@ -1,5 +1,15 @@
 /* Assigned work polygons: transparent outline, no hover tooltip, click-only task popup. */
 (function () {
+    function isGcpCollectionActive() {
+        const button = document.getElementById("add-gcp-button");
+        return Boolean(
+            button && (button.textContent || "")
+                .trim()
+                .toLowerCase()
+                .includes("stop gcp")
+        );
+    }
+
     window.studentCoverage = window.studentCoverage || {};
     window.studentCoverage.handlers = Object.assign({}, window.studentCoverage.handlers || {}, {
         polygonStyle: function () {
@@ -15,7 +25,18 @@
             const props = (feature && feature.properties) || {};
             const label = props.feature_label || props.source_feature_key || "Assigned work area";
             layer.on("click", function (event) {
-                if (event && event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+                // In collection mode, a click on an assigned polygon is also a
+                // valid reference-map click for a new GCP. Do not open a task
+                // popup or stop propagation: the click must reach dl.Map.
+                if (isGcpCollectionActive()) {
+                    return;
+                }
+
+                // Outside collection mode, polygon clicks are reserved for
+                // reading task information and must not be treated as map clicks.
+                if (event && event.originalEvent) {
+                    L.DomEvent.stopPropagation(event.originalEvent);
+                }
 
                 const root = document.createElement("div");
                 root.className = "student-coverage-task-popup";

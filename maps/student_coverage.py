@@ -23,7 +23,10 @@ def install_student_coverage_overlays(map_component, layers: list[dict], map_kin
                 style=_STUDENT_NS("polygonStyle"),
                 onEachFeature=_STUDENT_NS("onEachFeature"),
                 interactive=True,
-                bubblingMouseEvents=False,
+                # Feature clicks must reach the map only while GCP collection
+                # is active. student_coverage_map.js stops propagation in
+                # browse mode and deliberately allows it in collection mode.
+                bubblingMouseEvents=True,
             ),
             name=label,
             checked=True,

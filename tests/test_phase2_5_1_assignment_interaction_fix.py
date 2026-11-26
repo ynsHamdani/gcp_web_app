@@ -32,4 +32,9 @@ def test_student_viewport_and_visual_only_overlays_remain_in_place():
     assert "query_student_geojson" in student_callback
     assert 'student_id = _require_student_id()' in student_callback
     assert "dl.LayersControl" in map_source
-    assert "bubblingMouseEvents=False" in map_source
+    # Feature clicks can reach dl.Map while collecting a GCP; in browse mode
+    # the student handler stops propagation before opening the task popup.
+    assert "bubblingMouseEvents=True" in map_source
+    student_js = (ROOT / "assets" / "student_coverage_map.js").read_text(encoding="utf-8")
+    assert "isGcpCollectionActive()" in student_js
+    assert "L.DomEvent.stopPropagation(event.originalEvent)" in student_js
