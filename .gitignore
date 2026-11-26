@@ -18,8 +18,11 @@ prj_str.txt
 *.phase2_6_backups/
 *.phase2_6_test_fix_backups/
 *.student_map_fix_backups/
+*.stage2_super_admin_backups/
+*.stage2_super_admin_hotfix_backups/
 
 # Local database credentials
 config.yaml
+config-prod.yaml
 examples-test/
 .stage1_security_backups/

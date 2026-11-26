@@ -11,6 +11,17 @@ from wtforms.validators import ValidationError
 
 from auth.forms import LoginForm
 from auth.login_throttle import LoginThrottle
+from auth.permissions import is_admin_role, is_super_admin_role
+
+
+def _landing_path(role: str) -> str:
+    if is_super_admin_role(role):
+        return "/super-admin/"
+    if is_admin_role(role):
+        # Preserve the existing login redirect contract. Flask's /admin view
+        # then redirects to the Dash mount at /admin/.
+        return "/admin"
+    return "/"
 
 
 def _safe_next_url(target: str | None) -> bool:
@@ -27,7 +38,7 @@ def create_auth_blueprint(user_store, login_throttle: LoginThrottle | None = Non
     @blueprint.route("/login", methods=["GET", "POST"])
     def login():
         if current_user.is_authenticated:
-            return redirect(url_for("auth.admin") if current_user.role == "admin" else "/")
+            return redirect(_landing_path(current_user.role))
         form = LoginForm()
         if form.validate_on_submit():
             identifier = form.identifier.data or ""
@@ -65,7 +76,7 @@ def create_auth_blueprint(user_store, login_throttle: LoginThrottle | None = Non
                 target = request.args.get("next")
                 if _safe_next_url(target):
                     return redirect(target)
-                return redirect(url_for("auth.admin") if user.role == "admin" else "/")
+                return redirect(_landing_path(user.role))
             retry_after = throttle.record_failure(identifier, remote_addr)
             if retry_after:
                 flash("Too many sign-in attempts. Please wait before trying again.", "error")
@@ -101,7 +112,7 @@ def create_auth_blueprint(user_store, login_throttle: LoginThrottle | None = Non
                 sid = session.get("gcp_session_id", "")
                 user_store.change_own_password(int(current_user.get_id()), new_password, sid)
                 flash("Your password has been changed. Other sessions have been revoked.", "success")
-                return redirect(url_for("auth.admin") if current_user.role == "admin" else "/")
+                return redirect(_landing_path(current_user.role))
         return render_template("change_password.html", csrf_token=generate_csrf(), error=error, must_change=bool(getattr(current_user, "must_change_password", False)))
 
     @blueprint.route("/logout", methods=["POST"])
@@ -125,8 +136,16 @@ def create_auth_blueprint(user_store, login_throttle: LoginThrottle | None = Non
     def admin():
         if not current_user.is_authenticated:
             return redirect(url_for("auth.login", next="/admin/"))
-        if current_user.role != "admin":
+        if not is_admin_role(current_user.role):
             abort(403)
         return redirect("/admin/")
+
+    @blueprint.route("/super-admin", methods=["GET"])
+    def super_admin():
+        if not current_user.is_authenticated:
+            return redirect(url_for("auth.login", next="/super-admin/"))
+        if not is_super_admin_role(current_user.role):
+            abort(403)
+        return redirect("/super-admin/")
 
     return blueprint

@@ -464,7 +464,7 @@ class PostgresGCPStore:
         requester_id = int(requester_id)
         role = str(requester_role).strip().lower()
 
-        if role == "admin":
+        if role in {"admin", "super_admin"}:
             sql = """
                 DELETE FROM gcps
                 WHERE gcp_id = %s

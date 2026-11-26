@@ -1,0 +1,21 @@
+# Prod configuration. Keep this file in .gitignore.
+
+database:
+  host: ep-round-snow-b22n0ebk.c-6.eu-central-1.aws.neon.tech
+  port: 5432  
+  name: gcp_web_app
+  user: gcp_app_runtime
+  password: "kLm_1qgovewznh9Yjh09jq678shsjPlkdshdjdgd9jkk"
+
+  sslmode: require
+  channel_binding: require
+
+  min_pool_size: 1
+  max_pool_size: 5
+  pool_timeout_seconds: 10
+  connect_timeout_seconds: 10
+
+development:
+  # Temporary development user until authentication is implemented.
+  user_id: 3
+

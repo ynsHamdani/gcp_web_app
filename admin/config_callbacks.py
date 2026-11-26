@@ -4,11 +4,13 @@ from dash import Input, Output, State, no_update
 from flask import abort, current_app
 from flask_login import current_user
 
+from auth.permissions import is_admin_role
+
 from services.runtime_settings import dash_request_max_content_length
 
 
 def _require_admin() -> None:
-    if not current_user.is_authenticated or getattr(current_user, "role", None) != "admin":
+    if not current_user.is_authenticated or not is_admin_role(getattr(current_user, "role", None)):
         abort(403)
 
 

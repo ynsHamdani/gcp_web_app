@@ -18,10 +18,12 @@ class FakeUserStore:
         self.users = {
             "student": AuthUser(10, "student", "student@example.org", "student", True),
             "admin": AuthUser(20, "admin", "admin@example.org", "admin", True),
+            "superadmin": AuthUser(30, "superadmin", "superadmin@example.org", "super_admin", True),
         }
         self.hashes = {
             "student": generate_password_hash("student-pass-123"),
             "admin": generate_password_hash("admin-pass-1234"),
+            "superadmin": generate_password_hash("superadmin-pass-1234"),
         }
 
     def get_by_id(self, user_id):
@@ -59,6 +61,10 @@ def make_client():
     @app.route("/admin/")
     def admin_dashboard():
         return "admin dashboard"
+
+    @app.route("/super-admin/")
+    def super_admin_dashboard():
+        return "super admin dashboard"
 
     init_auth(app, FakeUserStore(), secret_key="test-secret-key-long-enough-for-tests-0123456789")
     return app.test_client()
@@ -116,6 +122,16 @@ def test_admin_is_routed_to_admin_and_cannot_call_dash_endpoints():
 
     assert client.get("/_dash-layout").status_code == 403
 
+
+
+def test_super_admin_root_is_routed_to_privileged_console():
+    client = make_client()
+    response, _ = login(client, "superadmin", "superadmin-pass-1234")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/super-admin/")
+    root_response = client.get("/")
+    assert root_response.status_code == 302
+    assert root_response.headers["Location"].endswith("/super-admin/")
 
 def test_login_rejects_bad_credentials_and_logout_requires_csrf():
     client = make_client()
@@ -183,3 +199,25 @@ def test_login_and_authenticated_pages_are_not_cacheable():
     assert "no-store" in private_page.headers.get("Cache-Control", "")
     assert private_page.headers.get("Pragma") == "no-cache"
     assert private_page.headers.get("Expires") == "0"
+
+
+def test_super_admin_can_access_both_workspaces_and_lands_in_console():
+    client = make_client()
+    response, _ = login(client, "superadmin", "superadmin-pass-1234")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/super-admin/")
+    assert client.get("/super-admin/").status_code == 200
+    assert client.get("/admin/").status_code == 200
+    assert client.get("/").headers["Location"].endswith("/admin/")
+
+
+def test_admin_and_student_cannot_access_super_admin_console():
+    admin_client = make_client()
+    response, _ = login(admin_client, "admin", "admin-pass-1234")
+    assert response.status_code == 302
+    assert admin_client.get("/super-admin/").status_code == 403
+
+    student_client = make_client()
+    response, _ = login(student_client, "student", "student-pass-123")
+    assert response.status_code == 302
+    assert student_client.get("/super-admin/").status_code == 403

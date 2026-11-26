@@ -14,7 +14,10 @@ _PRIMARY = {**_BUTTON, "background": "#1d4ed8", "borderColor": "#1d4ed8", "color
 _DANGER = {**_BUTTON, "color": "#b91c1c", "borderColor": "#fecaca"}
 
 
-def create_admin_users_layout(*, users: list[dict], admin_username: str, csrf_token: str):
+def create_admin_users_layout(
+    *, users: list[dict], admin_username: str, csrf_token: str,
+    is_super_admin: bool = False,
+):
     columns = [
         {"field": "user_id", "headerName": "ID", "width": 75},
         {"field": "username", "headerName": "Username", "width": 155},
@@ -84,6 +87,22 @@ def create_admin_users_layout(*, users: list[dict], admin_username: str, csrf_to
         subtitle="Create and manage student accounts while preserving contribution history.",
         admin_username=admin_username, csrf_token=csrf_token, active_page="users",
         children=[
+            *([html.Section(
+                style={**_CARD, "marginBottom": "12px", "borderLeft": "4px solid #2563eb", "background": "#eff6ff"},
+                children=[
+                    html.Div("SUPER ADMIN ACCESS", style={"fontSize": "10px", "fontWeight": "800", "letterSpacing": "0.08em", "color": "#1d4ed8", "marginBottom": "5px"}),
+                    html.H3("Privileged account management is available", style={"fontSize": "15px", "margin": "0 0 5px", "color": "#172033"}),
+                    html.P(
+                        "This page continues to manage student accounts, roster imports, profiles and passwords. "
+                        "Creating Admins, managing Super Admins and changing privileged roles are handled separately.",
+                        style={"fontSize": "12px", "color": "#475569", "margin": "0 0 9px"},
+                    ),
+                    html.A(
+                        "Open Super Admin Console →", href="/super-admin/",
+                        style={"display": "inline-block", "padding": "8px 11px", "borderRadius": "7px", "background": "#1d4ed8", "color": "white", "fontSize": "12px", "fontWeight": "700", "textDecoration": "none"},
+                    ),
+                ],
+            )] if is_super_admin else []),
             html.Div(style={"display": "grid", "gridTemplateColumns": "repeat(2,minmax(0,1fr))", "gap": "12px", "marginBottom": "12px"}, children=[create_card, roster_card]),
             manage_card,
             html.Section(style={**_CARD, "marginTop": "12px"}, children=[

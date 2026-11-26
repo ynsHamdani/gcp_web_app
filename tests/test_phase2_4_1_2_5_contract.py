@@ -40,17 +40,22 @@ def test_store_validates_and_normalizes_student_ids():
     assert CoverageAssignmentStore._student_ids(["4", 2, 4]) == [2, 4]
 
 
-def test_student_overlays_are_visual_and_do_not_bubble_map_clicks():
+def test_student_overlays_allow_collection_clicks_and_reserve_browse_clicks_for_task_popups():
     source = (ROOT / "maps" / "student_coverage.py").read_text(encoding="utf-8")
+    handlers = (ROOT / "assets" / "student_coverage_map.js").read_text(encoding="utf-8")
     assert "dl.LayersControl" in source
     assert "dl.Overlay" in source
-    assert "bubblingMouseEvents=False" in source
+    # Leaflet bubbling stays enabled so a polygon click can place a GCP
+    # while collection is active. The custom handler stops it in browse mode.
+    assert "bubblingMouseEvents=True" in source
     assert "interactive=True" in source
+    assert "if (isGcpCollectionActive())" in handlers
+    assert "L.DomEvent.stopPropagation(event.originalEvent)" in handlers
 
 
 def test_assignment_callbacks_require_authenticated_admin_and_store_server_ids():
     source = (ROOT / "admin" / "coverage_assignment_callbacks.py").read_text(encoding="utf-8")
-    assert 'getattr(current_user, "role", None) != "admin"' in source
+    assert 'not is_admin_role(getattr(current_user, "role", None))' in source
     assert "assigned_by=actor_id" in source
     assert "student_values or []" in source
 

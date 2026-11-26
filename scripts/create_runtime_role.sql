@@ -1,12 +1,13 @@
 -- Create a restricted runtime login for the GCP Web App on Neon/PostgreSQL.
 -- Run this once in the target database while connected as neondb_owner (or
 -- another database role permitted to create roles and grant these privileges).
+-- Apply the base application migrations through 009_super_admin_up.sql before using this template.
 -- Replace the password below with a new, unique, high-entropy password first.
 -- Do not reuse GCP_SECRET_KEY, RASTER_SIGNING_KEY, or the neondb_owner password.
 
 DO $$
 DECLARE
-    runtime_password TEXT := 'kLm_1qgovewznh9Y';
+    runtime_password TEXT := 'REPLACE_WITH_A_UNIQUE_RANDOM_PASSWORD';
 BEGIN
     IF runtime_password LIKE 'REPLACE_WITH_%' OR length(runtime_password) < 32 THEN
         RAISE EXCEPTION 'Replace runtime_password with a unique password of at least 32 characters.';
@@ -26,17 +27,20 @@ GRANT USAGE ON SCHEMA public TO gcp_app_runtime;
 
 -- Core application tables.
 GRANT SELECT ON TABLE public.users TO gcp_app_runtime;
-GRANT INSERT (username, email, password_hash, user_role, must_change_password)
+GRANT INSERT (username, email, password_hash, must_change_password)
     ON TABLE public.users TO gcp_app_runtime;
-GRANT UPDATE (username, email, password_hash, is_active, must_change_password)
+GRANT UPDATE (username, email, password_hash, is_active, must_change_password, user_role)
     ON TABLE public.users TO gcp_app_runtime;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.layers TO gcp_app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.gcps TO gcp_app_runtime;
 
 -- Authentication, runtime settings, and audit writes.
+GRANT SELECT ON TABLE public.super_admin_bootstrap_guard TO gcp_app_runtime;
+GRANT UPDATE (bootstrap_completed_at, bootstrapped_by, promoted_user_id)
+    ON TABLE public.super_admin_bootstrap_guard TO gcp_app_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.auth_sessions TO gcp_app_runtime;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.app_settings TO gcp_app_runtime;
-GRANT INSERT ON TABLE public.admin_audit_log TO gcp_app_runtime;
+GRANT SELECT, INSERT ON TABLE public.admin_audit_log TO gcp_app_runtime;
 
 -- Semantic GCP context and polygon allocation workflow.
 GRANT SELECT, INSERT, UPDATE ON TABLE public.gcp_context_categories TO gcp_app_runtime;

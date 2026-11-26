@@ -28,3 +28,11 @@ def test_admin_user_guard_rejects_students():
     with app.app_context(), patch("admin.user_callbacks.current_user", _FakeUser(True, "student")):
         with pytest.raises(Forbidden):
             require_admin_users()
+
+
+def test_super_admin_inherits_existing_admin_callback_permissions():
+    app = Flask(__name__)
+    with app.app_context(), patch("admin.gcp_callbacks.current_user", _FakeUser(True, "super_admin")):
+        require_admin_gcp()
+    with app.app_context(), patch("admin.user_callbacks.current_user", _FakeUser(True, "super_admin")):
+        require_admin_users()

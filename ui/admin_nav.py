@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dash import dcc, html
+from flask import has_request_context
+from flask_login import current_user
+
+from auth.permissions import is_super_admin_role
 
 _NAV_LINK = {
     "padding": "8px 11px",
@@ -46,13 +50,15 @@ def _logout_form(csrf_token: str):
     )
 
 
-def create_admin_header(*, admin_username: str, csrf_token: str, active_page: str):
+def create_admin_header(*, admin_username: str, csrf_token: str, active_page: str, is_super_admin: bool = False):
     pages = [
         ("workspace", "GCP Workspace", "/admin/"),
         ("users", "User Management", "/admin/users/"),
         ("config", "Configuration", "/admin/config/"),
         ("coverage", "Coverage & Statistics", "/admin/coverage/"),
     ]
+    if is_super_admin:
+        pages.append(("super-admin", "Super Admin Console", "/super-admin/"))
     links = []
     for key, label, href in pages:
         active = key == active_page
@@ -67,6 +73,7 @@ def create_admin_header(*, admin_username: str, csrf_token: str, active_page: st
             },
             **{"aria-current": "page" if active else "false"},
         ))
+    role_label = "Super Administrator" if is_super_admin else "Administrator"
     return html.Header(
         id="admin-global-header",
         style=_HEADER_STYLE,
@@ -75,7 +82,7 @@ def create_admin_header(*, admin_username: str, csrf_token: str, active_page: st
                 style={"minWidth": "145px", "flex": "0 0 auto"},
                 children=[
                     html.Div("Historical Map GCP", style={"fontWeight": "750", "fontSize": "17px", "color": "#172033", "whiteSpace": "nowrap"}),
-                    html.Div(f"{admin_username} · Administrator", style={"fontSize": "11px", "color": "#64748b", "whiteSpace": "nowrap"}),
+                    html.Div(f"{admin_username} · {role_label}", style={"fontSize": "11px", "color": "#64748b", "whiteSpace": "nowrap"}),
                 ],
             ),
             html.Div(
@@ -91,6 +98,7 @@ def create_admin_header(*, admin_username: str, csrf_token: str, active_page: st
 
 def create_page_shell(*, title: str, subtitle: str, admin_username: str, csrf_token: str, active_page: str, children):
     """Shared admin shell: fixed nav and an independently scrollable page body."""
+    is_super_admin = has_request_context() and current_user.is_authenticated and is_super_admin_role(getattr(current_user, "role", None))
     return html.Div(
         style={
             "height": "100vh",
@@ -100,7 +108,7 @@ def create_page_shell(*, title: str, subtitle: str, admin_username: str, csrf_to
             "fontFamily": "Arial, sans-serif",
         },
         children=[
-            create_admin_header(admin_username=admin_username, csrf_token=csrf_token, active_page=active_page),
+            create_admin_header(admin_username=admin_username, csrf_token=csrf_token, active_page=active_page, is_super_admin=is_super_admin),
             html.Main(
                 id="admin-page-scroll",
                 style={
@@ -125,7 +133,7 @@ def create_page_shell(*, title: str, subtitle: str, admin_username: str, csrf_to
     )
 
 
-def create_workspace_header(*, admin_username: str, csrf_token: str):
+def create_workspace_header(*, admin_username: str, csrf_token: str, is_super_admin: bool = False):
     """Fixed global navigation plus in-page controls for the GCP workspace."""
     internal = [
         ("Add a GCP", "admin-add-gcp-panel", True),
@@ -152,6 +160,9 @@ def create_workspace_header(*, admin_username: str, csrf_token: str):
         html.A("Configuration", href="/admin/config/", style={**_NAV_LINK, "color": "#334155"}),
         html.A("Coverage & Statistics", href="/admin/coverage/", style={**_NAV_LINK, "color": "#334155"}),
     ]
+    if is_super_admin:
+        page_links.append(html.A("Super Admin", href="/super-admin/", style={**_NAV_LINK, "color": "#1d4ed8"}))
+    role_label = "Super Administrator" if is_super_admin else "Administrator"
     return html.Header(
         id="admin-global-header",
         style=_HEADER_STYLE,
@@ -160,7 +171,7 @@ def create_workspace_header(*, admin_username: str, csrf_token: str):
                 style={"minWidth": "132px", "flex": "0 0 auto"},
                 children=[
                     html.Div("GCP Workspace", style={"fontWeight": "750", "fontSize": "17px", "color": "#172033", "whiteSpace": "nowrap"}),
-                    html.Div(f"{admin_username} · Administrator", style={"fontSize": "11px", "color": "#64748b", "whiteSpace": "nowrap"}),
+                    html.Div(f"{admin_username} · {role_label}", style={"fontSize": "11px", "color": "#64748b", "whiteSpace": "nowrap"}),
                 ],
             ),
             html.Div(

@@ -5,6 +5,8 @@ from pathlib import Path
 from dash import Dash
 from flask import has_request_context
 from flask_login import current_user
+
+from auth.permissions import is_admin_role
 from flask_wtf.csrf import generate_csrf
 
 from admin.config_callbacks import register_admin_config_callbacks
@@ -24,7 +26,7 @@ def mount_admin_config_dashboard(*, server, settings_store, auth_store, context_
     )
 
     def serve_layout():
-        is_admin = has_request_context() and current_user.is_authenticated and getattr(current_user, "role", None) == "admin"
+        is_admin = has_request_context() and current_user.is_authenticated and is_admin_role(getattr(current_user, "role", None))
         if is_admin:
             settings = settings_store.get_settings()
             username = current_user.username

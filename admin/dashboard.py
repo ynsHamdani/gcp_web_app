@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from auth.permissions import is_admin_role, is_super_admin_role
+
 from dash import Dash
 from flask import has_request_context
 from flask_login import current_user
@@ -27,7 +29,7 @@ def _contributor_options(users: list[dict]) -> list[dict]:
     options = []
     for user in users:
         role = str(user.get("user_role") or "user").strip().lower()
-        role_label = "Admin" if role == "admin" else "Student"
+        role_label = "Super Admin" if role == "super_admin" else ("Admin" if role == "admin" else "Student")
         inactive = " · inactive" if not user.get("is_active", True) else ""
         email = str(user.get("email") or "")
         suffix = f" · {email}" if email else ""
@@ -73,7 +75,7 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
     )
 
     def serve_admin_layout():
-        has_admin_session = has_request_context() and current_user.is_authenticated and getattr(current_user, "role", None) == "admin"
+        has_admin_session = has_request_context() and current_user.is_authenticated and is_admin_role(getattr(current_user, "role", None))
         if has_admin_session:
             records = annotate_gcp_raster_availability(gcp_store.list_for_admin())
             users = auth_store.list_users(include_gcp_count=False)
@@ -111,6 +113,7 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
             unavailable_layers=layer_state["unavailable_layers"],
             context_categories=context_store.list_all(),
             csrf_token=csrf_token, admin_username=admin_username,
+            is_super_admin=is_super_admin_role(getattr(current_user, "role", None)) if has_request_context() and current_user.is_authenticated else False,
         )
 
     admin_app.layout = serve_admin_layout
@@ -122,5 +125,10 @@ def mount_admin_dashboard(*, server, gcp_store, layer_store, auth_store):
     users_app = mount_admin_users_dashboard(server=server, auth_store=auth_store)
     config_app = mount_admin_config_dashboard(server=server, settings_store=settings_store, auth_store=auth_store, context_store=context_store)
     coverage_app = mount_coverage_dashboard(server=server, auth_store=auth_store)
-    server.extensions["gcp_admin_apps"] = {"workspace": admin_app, "users": users_app, "config": config_app, "coverage": coverage_app}
+    from admin.super_admin_dashboard import mount_super_admin_dashboard
+    super_admin_app = mount_super_admin_dashboard(server=server, auth_store=auth_store)
+    server.extensions["gcp_admin_apps"] = {
+        "workspace": admin_app, "users": users_app, "config": config_app,
+        "coverage": coverage_app, "super_admin": super_admin_app,
+    }
     return admin_app

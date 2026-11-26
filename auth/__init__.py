@@ -10,6 +10,7 @@ from flask import abort, redirect, request, session, url_for
 from flask_login import LoginManager, current_user, logout_user
 
 from auth.routes import create_auth_blueprint
+from auth.permissions import ALL_ROLES, is_admin_role, is_super_admin_role
 from config import APP_ENV
 from services.runtime_settings import dash_request_max_content_length
 
@@ -120,22 +121,32 @@ def init_auth(server, user_store, *, secret_key: str, raster_signing_key: str | 
             return None
 
         is_admin_path = request.path == "/admin" or request.path.startswith("/admin/")
+        is_super_admin_path = request.path == "/super-admin" or request.path.startswith("/super-admin/")
         if not current_user.is_authenticated:
-            if request.method == "GET" and (request.path == "/" or is_admin_path):
-                target = "/admin/" if is_admin_path else "/"
+            if request.method == "GET" and (request.path == "/" or is_admin_path or is_super_admin_path):
+                target = "/super-admin/" if is_super_admin_path else ("/admin/" if is_admin_path else "/")
                 return redirect(url_for("auth.login", next=target))
             abort(401)
 
         role = getattr(current_user, "role", None)
-        if role not in {"student", "admin"}:
+        if role not in ALL_ROLES:
             abort(403)
-        if role == "student" and is_admin_path:
+        if role == "student" and (is_admin_path or is_super_admin_path):
             abort(403)
-        if role == "admin":
+        if is_super_admin_path and not is_super_admin_role(role):
+            abort(403)
+        # Super Admin is an administrator for access to existing Admin
+        # workspaces, but the application root should open the privileged
+        # console rather than silently landing in the ordinary Admin view.
+        if is_super_admin_role(role):
+            if request.path == "/" and request.method == "GET":
+                return redirect("/super-admin/")
+        elif role == "admin":
             if request.path == "/" and request.method == "GET":
                 return redirect("/admin/")
-            if request.path.startswith(("/_dash", "/assets/")):
-                abort(403)
+
+        if is_admin_role(role) and request.path.startswith(("/_dash", "/assets/")):
+            abort(403)
 
         # A temporary password grants access only to the password-change page
         # until the user chooses a new password.

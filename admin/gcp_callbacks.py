@@ -4,13 +4,15 @@ from dash import Input, Output, State, ctx, dcc, no_update
 from flask import abort
 from flask_login import current_user
 
+from auth.permissions import is_admin_role
+
 from maps.admin_gcp import build_admin_gcp_geojson, build_admin_gcp_row
 from services.gcp_export import build_gcp_csv
 from services.layer_availability import annotate_gcp_raster_availability
 
 
 def _require_admin() -> None:
-    if not current_user.is_authenticated or getattr(current_user, "role", None) != "admin":
+    if not current_user.is_authenticated or not is_admin_role(getattr(current_user, "role", None)):
         abort(403)
 
 

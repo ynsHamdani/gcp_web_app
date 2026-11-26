@@ -84,6 +84,7 @@ def create_admin_layout(
     unavailable_layers: list[str] | None = None,
     csrf_token: str = "",
     admin_username: str = "Administrator",
+    is_super_admin: bool = False,
     context_categories: list[dict] | None = None,
 ):
     """Build a compact workspace with explicit load/zoom/activate controls."""
@@ -175,7 +176,7 @@ def create_admin_layout(
             "boxSizing": "border-box",
         },
         children=[
-            create_workspace_header(admin_username=admin_username, csrf_token=csrf_token),
+            create_workspace_header(admin_username=admin_username, csrf_token=csrf_token, is_super_admin=is_super_admin),
             html.Main(
                 id="admin-workspace-scroll",
                 style={

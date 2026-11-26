@@ -8,6 +8,8 @@ from dash import html
 from flask import abort
 from flask_login import current_user
 
+from auth.permissions import is_admin_role
+
 from maps.raster import prepare_uploaded_raster
 from services.admin_layers import (
     build_admin_layer_state,
@@ -17,7 +19,7 @@ from services.admin_layer_summary import summarize_unavailable_layers
 
 
 def _require_admin() -> None:
-    if not current_user.is_authenticated or getattr(current_user, "role", None) != "admin":
+    if not current_user.is_authenticated or not is_admin_role(getattr(current_user, "role", None)):
         abort(403)
 
 

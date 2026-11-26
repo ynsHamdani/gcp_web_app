@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Create a student or administrator account interactively."""
+"""Create a student account interactively. Privileged accounts require the Super Admin Console."""
 
 import argparse
 import getpass
@@ -20,16 +20,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--role",
-        choices=("student", "admin"),
-        help="Account role. If omitted, it is requested interactively.",
+        choices=("student",),
+        help="Only student accounts can be created with this utility; privileged roles require the Super Admin workflow.",
     )
     args = parser.parse_args()
 
     username = input("Username: ").strip()
     email = input("Email: ").strip()
-    role = args.role or input("Role [student/admin]: ").strip().lower()
-    if role not in {"student", "admin"}:
-        parser.error("Role must be 'student' or 'admin'.")
+    role = args.role or "student"
+    if role != "student":
+        parser.error("This utility only creates student accounts. Use the Super Admin Console for privileged accounts.")
 
     password = getpass.getpass("Password (minimum 12 characters): ")
     confirmation = getpass.getpass("Confirm password: ")
