@@ -8,6 +8,7 @@ from auth.permissions import is_admin_role
 
 from maps.admin_gcp import build_admin_gcp_geojson, build_admin_gcp_row
 from services.gcp_export import build_gcp_csv
+from services.gcp_grid_count import format_gcp_grid_count
 from services.layer_availability import annotate_gcp_raster_availability
 
 
@@ -173,10 +174,19 @@ def register_admin_gcp_callbacks(app, gcp_store, layer_store):
             records,
             build_admin_gcp_geojson(records, "reference"),
             build_admin_gcp_geojson(records, "historical"),
-            f"{status_prefix}Showing {len(records)} GCP(s).",
+            status_prefix.strip() or "GCP records are up to date.",
             _raster_status(layer_state, historical_value),
             _historical_options(layer_state),
         )
+
+    @app.callback(
+        Output("admin-gcp-count", "children"),
+        Input("admin-gcp-table", "virtualRowData"),
+        State("admin-gcp-table", "rowData"),
+    )
+    def update_admin_gcp_count(visible_rows, loaded_rows):
+        _require_admin()
+        return format_gcp_grid_count(visible_rows, loaded_rows)
 
     @app.callback(
         Output("admin-reference-gcp-geojson", "hideout"),

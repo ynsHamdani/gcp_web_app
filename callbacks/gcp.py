@@ -743,8 +743,9 @@ def register_gcp_callbacks(app, store: GCPStore):
         Input("gcp-records", "data"),
         Input("gcp-pending", "data"),
         Input("gcp-selected-id", "data"),
+        Input("gcp-collection-active", "data"),
     )
-    def render_gcp_state(records, pending, selected_gcp_id):
+    def render_gcp_state(records, pending, selected_gcp_id, collection_active):
         records = records or []
 
         reference_children = build_gcp_layer_children(
@@ -752,13 +753,19 @@ def register_gcp_callbacks(app, store: GCPStore):
             pending,
             selected_gcp_id,
             "reference",
+            collection_active=collection_active,
         )
         historical_children = build_gcp_layer_children(
             records,
             pending,
             selected_gcp_id,
             "historical",
+            collection_active=collection_active,
         )
-        rows = [gcp_table_row(record) for record in records]
+        # Starting or stopping collection only changes how confirmed map
+        # features interact. Do not rewrite table rowData and disturb selection.
+        rows = no_update if ctx.triggered_id == "gcp-collection-active" else [
+            gcp_table_row(record) for record in records
+        ]
 
         return reference_children, historical_children, rows

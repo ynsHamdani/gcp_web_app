@@ -208,7 +208,7 @@ def test_super_admin_can_access_both_workspaces_and_lands_in_console():
     assert response.headers["Location"].endswith("/super-admin/")
     assert client.get("/super-admin/").status_code == 200
     assert client.get("/admin/").status_code == 200
-    assert client.get("/").headers["Location"].endswith("/admin/")
+    assert client.get("/").headers["Location"].endswith("/super-admin/")
 
 
 def test_admin_and_student_cannot_access_super_admin_console():

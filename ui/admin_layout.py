@@ -354,7 +354,13 @@ def create_admin_layout(
                             ),
                         ],
                     ),
-                    html.Div(id="admin-gcp-status", children=f"Loaded {len(records)} GCP(s).", role="status", style={"fontSize": "11px", "color": "#334155", "marginTop": "7px"}),
+                    html.Div(
+                        style={"display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "8px", "flexWrap": "wrap", "marginTop": "7px"},
+                        children=[
+                            html.Div(id="admin-gcp-status", children="GCP records are ready.", role="status", style={"fontSize": "11px", "color": "#334155"}),
+                            html.Div(id="admin-gcp-count", children=f"Showing {len(records):,} of {len(records):,} loaded GCP(s).", role="status", style={"fontSize": "11px", "fontWeight": "650", "color": "#334155"}),
+                        ],
+                    ),
                     html.Div(id="admin-raster-status", children="Raster availability is checked on Refresh.", role="status", style={"fontSize": "11px", "color": "#92400e", "marginTop": "4px"}),
                 ],
             ),

@@ -45,10 +45,19 @@ def create_super_admin_layout(*, users: list[dict], audit_rows: list[dict], user
     )
 
     return html.Div(
-        style={"minHeight": "100vh", "background": "#f5f7fb", "color": "#172033", "fontFamily": "Arial, sans-serif"},
+        style={
+            "height": "100vh",
+            "minHeight": "0",
+            "display": "flex",
+            "flexDirection": "column",
+            "overflow": "hidden",
+            "background": "#f5f7fb",
+            "color": "#172033",
+            "fontFamily": "Arial, sans-serif",
+        },
         children=[
             html.Header(
-                style={"position": "sticky", "top": 0, "zIndex": 10, "display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "12px", "padding": "12px 20px", "background": "#fff", "borderBottom": "1px solid #dbe2ea"},
+                style={"position": "relative", "flex": "0 0 auto", "zIndex": 10, "display": "flex", "alignItems": "center", "justifyContent": "space-between", "gap": "12px", "padding": "12px 20px", "background": "#fff", "borderBottom": "1px solid #dbe2ea"},
                 children=[
                     html.Div([
                         html.Div("Super Admin Console", style={"fontSize": "17px", "fontWeight": "800"}),
@@ -64,7 +73,23 @@ def create_super_admin_layout(*, users: list[dict], audit_rows: list[dict], user
                     ]),
                 ],
             ),
-            html.Main(style={"maxWidth": "1500px", "margin": "0 auto", "padding": "18px 18px 40px"}, children=[
+            html.Main(
+                id="super-admin-scroll-container",
+                className="super-admin-scroll-container",
+                style={
+                    "width": "100%",
+                    "maxWidth": "1500px",
+                    "boxSizing": "border-box",
+                    "margin": "0 auto",
+                    "padding": "18px 18px 40px",
+                    "flex": "1 1 auto",
+                    "minHeight": "0",
+                    "overflowY": "auto",
+                    "overflowX": "hidden",
+                    "overscrollBehavior": "contain",
+                    "WebkitOverflowScrolling": "touch",
+                },
+                children=[
                 html.H1("Privileged account management", style={"fontSize": "23px", "margin": "0 0 5px"}),
                 html.P("Promote or demote accounts across Student, Admin and Super Admin. Existing student profile, roster and GCP workflows remain in User Management.", style={"fontSize": "13px", "color": "#64748b", "margin": "0 0 16px"}),
                 html.Section(style={**_CARD, "marginBottom": "12px"}, children=[
@@ -101,6 +126,7 @@ def create_super_admin_layout(*, users: list[dict], audit_rows: list[dict], user
                     audit_table,
                 ]),
                 dcc.Store(id="super-admin-revision", data=0),
-            ]),
+                ],
+            ),
         ],
     )
